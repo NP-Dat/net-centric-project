@@ -124,7 +124,7 @@ We will use a standard Client-Server architecture.
 **Phase 3: Project Structure (Go Modules)**
 
 ```
-text-clash-royale/
+net-centric-project (text-clash-royale)/
 ├── cmd/
 │   ├── tcr-server/
 │   │   └── main.go       # Server executable entry point
