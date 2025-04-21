@@ -41,6 +41,9 @@ func main() {
 func cliLoop(c *client.Client) {
 	reader := bufio.NewReader(os.Stdin)
 
+	// Don't prompt for login automatically - wait for the user to use the login command
+	// or respond to server events (like login prompts)
+
 	for c.IsConnected() {
 		fmt.Print("> ")
 		input, err := reader.ReadString('\n')
@@ -59,18 +62,32 @@ func cliLoop(c *client.Client) {
 
 		switch strings.ToLower(command) {
 		case "login":
-			if len(parts) < 3 {
-				fmt.Println("Usage: login <username> <password>")
-				continue
-			}
-			username := parts[1]
-			password := parts[2]
-
-			err := c.LoginWithCredentials(username, password)
+			// Use our interactive prompt
+			err := c.PromptLogin()
 			if err != nil {
 				fmt.Printf("Failed to login: %v\n", err)
+			}
+
+		case "join":
+			// Join the matchmaking queue
+			err := c.JoinMatchmaking()
+			if err != nil {
+				fmt.Printf("Failed to join matchmaking: %v\n", err)
 			} else {
-				fmt.Println("Login request sent")
+				fmt.Println("Joining matchmaking queue...")
+			}
+
+		case "send":
+			if len(parts) < 2 {
+				fmt.Println("Usage: send <message>")
+				continue
+			}
+			message := strings.Join(parts[1:], " ")
+			err := c.SendMessage(message)
+			if err != nil {
+				fmt.Printf("Failed to send message: %v\n", err)
+			} else {
+				fmt.Println("Message sent")
 			}
 
 		case "quit", "exit":
@@ -91,7 +108,9 @@ func cliLoop(c *client.Client) {
 // printHelp shows available commands
 func printHelp() {
 	fmt.Println("Available commands:")
-	fmt.Println("  login <username> <password> - Login to the server")
+	fmt.Println("  login - Login to the server interactively")
+	fmt.Println("  join - Join the matchmaking queue")
+	fmt.Println("  send <message> - Send a message to the server")
 	fmt.Println("  quit/exit - Disconnect and quit")
 	fmt.Println("  help - Show this help message")
 }

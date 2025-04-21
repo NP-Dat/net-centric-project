@@ -128,6 +128,20 @@ func (c *Client) LoginWithCredentials(username, password string) error {
 	return c.Send(network.MessageTypeLogin, loginPayload)
 }
 
+// JoinMatchmaking sends a request to join the matchmaking queue
+func (c *Client) JoinMatchmaking() error {
+	if !c.connected {
+		return fmt.Errorf("not connected to server")
+	}
+
+	if c.Username == "" {
+		return fmt.Errorf("must be logged in to join matchmaking")
+	}
+
+	// Send join queue message - empty payload is fine for Sprint 1
+	return c.Send(network.MessageTypeJoinQueue, map[string]interface{}{})
+}
+
 // receiveMessages continuously receives and processes messages from the server
 func (c *Client) receiveMessages() {
 	defer func() {

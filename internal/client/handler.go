@@ -157,3 +157,39 @@ func printGameState(state *network.GameStatePayload) {
 		fmt.Printf("Time left: %d seconds\n", state.TimeLeft)
 	}
 }
+
+// Interactive login prompt for user authentication
+func (c *Client) PromptLogin() error {
+	var username, password string
+
+	fmt.Println("=== Text Clash Royale Login ===")
+	fmt.Print("Username: ")
+	fmt.Scanln(&username)
+
+	fmt.Print("Password: ")
+	fmt.Scanln(&password)
+
+	// Validate inputs
+	if username == "" || password == "" {
+		return fmt.Errorf("username and password cannot be empty")
+	}
+
+	// Attempt to login with provided credentials
+	return c.LoginWithCredentials(username, password)
+}
+
+// SendMessage sends a chat message to the server
+func (c *Client) SendMessage(message string) error {
+	if !c.IsConnected() {
+		return fmt.Errorf("not connected to server")
+	}
+
+	// For now, we'll use GameEvent for messages during Sprint 1
+	// In later sprints, we might implement a dedicated chat system
+	messagePayload := &network.GameEventPayload{
+		Message: message,
+		Time:    time.Now(),
+	}
+
+	return c.Send(network.MessageTypeGameEvent, messagePayload)
+}

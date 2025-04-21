@@ -11,6 +11,7 @@ const (
 	MessageTypeLogin       MessageType = "login"
 	MessageTypeDeployTroop MessageType = "deploy_troop"
 	MessageTypeQuit        MessageType = "quit"
+	MessageTypeJoinQueue   MessageType = "join_queue" // New message type for matchmaking
 
 	// Server to Client message types
 	MessageTypeAuthResult  MessageType = "auth_result"
