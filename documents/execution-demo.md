@@ -30,7 +30,7 @@ This document provides instructions on how to execute the server and client, as 
 
 ## Client Commands and Interactions
 
-(handle in `cmd\tcr-client\main.go` , remember to update it)
+(handle in `cmd\tcr-client\main.go` and `internal\client\handler.go`, remember to update it)
 
 After connecting to the server, the client can execute the following commands:
 
@@ -103,3 +103,4 @@ After connecting to the server, the client can execute the following commands:
 - Ensure the server is running before starting the client.
 - If the client disconnects unexpectedly, restart the client and log in again.
 - Matchmaking requires at least two clients to join the queue.
+- `ctrl + C` for in Server terminal to close the Server.

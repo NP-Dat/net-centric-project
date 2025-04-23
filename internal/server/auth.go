@@ -25,6 +25,31 @@ func NewAuthManager(basePath string) *AuthManager {
 	}
 }
 
+// GetPlayerData retrieves player data by username
+func (am *AuthManager) GetPlayerData(username string) (*models.Player, error) {
+	// Try to load player data from the persistence layer
+	playerData, err := persistence.LoadPlayerData(am.basePath, username)
+	if err != nil {
+		log.Printf("Error loading player data for %s: %v", username, err)
+		return nil, errors.New("error loading player data")
+	}
+
+	if playerData == nil {
+		return nil, errors.New("player not found")
+	}
+
+	// Convert PlayerData to Player
+	player := &models.Player{
+		ID:             username, // Use username as ID for simplicity
+		Username:       playerData.Username,
+		HashedPassword: playerData.HashedPassword,
+		EXP:            playerData.EXP,
+		Level:          playerData.Level,
+	}
+
+	return player, nil
+}
+
 // AuthenticateUser authenticates a user with the given username and password
 func (am *AuthManager) AuthenticateUser(username, password string) (*models.PlayerData, error) {
 	// Validation: Check if the username or password is empty

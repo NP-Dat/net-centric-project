@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NP-Dat/net-centric-project/internal/game"
 	"github.com/NP-Dat/net-centric-project/internal/network"
 )
 
@@ -99,7 +100,7 @@ func (mm *MatchmakingManager) tryMatchmaking() error {
 		mm.gameCounter++
 		gameID := fmt.Sprintf("game-%d", mm.gameCounter)
 
-		// For Sprint 1, just notify both players that they've been matched
+		// Start game using session manager
 		mm.startGame(player1, player2, gameID)
 	}
 
@@ -110,37 +111,21 @@ func (mm *MatchmakingManager) tryMatchmaking() error {
 func (mm *MatchmakingManager) startGame(player1, player2 *Client, gameID string) {
 	log.Printf("Starting game %s between %s and %s", gameID, player1.Username, player2.Username)
 
-	// For Sprint 1, we'll just notify players that they've been matched
-	// In future sprints, we'd set up the actual game state
+	// Use the session manager to create and start the game
+	session, err := mm.server.sessionManager.CreateSession(player1, player2, gameID, game.GameModeSimple)
+	if err != nil {
+		log.Printf("Error creating game session: %v", err)
 
-	// Set the game ID for both clients
-	player1.GameID = gameID
-	player2.GameID = gameID
+		// Notify players about the error
+		errorMsg := &network.GameEventPayload{
+			Message: fmt.Sprintf("Failed to start game: %v", err),
+			Time:    time.Now(),
+		}
 
-	// Send game start event to player 1
-	gameStartPayload1 := &network.GameStartPayload{
-		GameID:           gameID,
-		OpponentUsername: player2.Username,
-		GameMode:         "simple",
-		YourTurn:         true,                        // Player 1 goes first
-		InitialState:     &network.GameStatePayload{}, // Empty for Sprint 1
+		player1.Codec.Send(network.MessageTypeGameEvent, errorMsg)
+		player2.Codec.Send(network.MessageTypeGameEvent, errorMsg)
+		return
 	}
 
-	// Send game start event to player 2
-	gameStartPayload2 := &network.GameStartPayload{
-		GameID:           gameID,
-		OpponentUsername: player1.Username,
-		GameMode:         "simple",
-		YourTurn:         false,                       // Player 2 goes second
-		InitialState:     &network.GameStatePayload{}, // Empty for Sprint 1
-	}
-
-	// Send the start game messages
-	if err := player1.Codec.Send(network.MessageTypeGameStart, gameStartPayload1); err != nil {
-		log.Printf("Error sending game start to player1 %s: %v", player1.ID, err)
-	}
-
-	if err := player2.Codec.Send(network.MessageTypeGameStart, gameStartPayload2); err != nil {
-		log.Printf("Error sending game start to player2 %s: %v", player2.ID, err)
-	}
+	log.Printf("Game session %s created successfully. Mode: %v", session.ID, session.GameMode)
 }

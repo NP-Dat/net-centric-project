@@ -41,9 +41,6 @@ func main() {
 func cliLoop(c *client.Client) {
 	reader := bufio.NewReader(os.Stdin)
 
-	// Don't prompt for login automatically - wait for the user to use the login command
-	// or respond to server events (like login prompts)
-
 	for c.IsConnected() {
 		fmt.Print("> ")
 		input, err := reader.ReadString('\n')
@@ -57,50 +54,10 @@ func cliLoop(c *client.Client) {
 			continue
 		}
 
-		parts := strings.Fields(input)
-		command := parts[0]
-
-		switch strings.ToLower(command) {
-		case "login":
-			// Use our interactive prompt
-			err := c.PromptLogin()
-			if err != nil {
-				fmt.Printf("Failed to login: %v\n", err)
-			}
-
-		case "join":
-			// Join the matchmaking queue
-			err := c.JoinMatchmaking()
-			if err != nil {
-				fmt.Printf("Failed to join matchmaking: %v\n", err)
-			} else {
-				fmt.Println("Joining matchmaking queue...")
-			}
-
-		case "send":
-			if len(parts) < 2 {
-				fmt.Println("Usage: send <message>")
-				continue
-			}
-			message := strings.Join(parts[1:], " ")
-			err := c.SendMessage(message)
-			if err != nil {
-				fmt.Printf("Failed to send message: %v\n", err)
-			} else {
-				fmt.Println("Message sent")
-			}
-
-		case "quit", "exit":
-			fmt.Println("Disconnecting from server...")
-			c.Disconnect()
-			return
-
-		case "help":
-			printHelp()
-
-		default:
-			fmt.Printf("Unknown command: %s\n", command)
-			fmt.Println("Type 'help' to see available commands")
+		// Use the ParseCommand function from the client package instead of local parsing
+		err = c.ParseCommand(input)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
 		}
 	}
 }

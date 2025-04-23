@@ -14,16 +14,17 @@ import (
 
 // Server represents the TCR game server
 type Server struct {
-	Host         string
-	Port         int
-	listener     net.Listener
-	clients      map[string]*Client
-	clientsMux   sync.Mutex
-	gameConfig   *models.GameConfig
-	configLoader *persistence.ConfigLoader
-	basePath     string
-	authManager  *AuthManager        // Add auth manager for user authentication
-	matchmaker   *MatchmakingManager // Add matchmaking manager
+	Host           string
+	Port           int
+	listener       net.Listener
+	clients        map[string]*Client
+	clientsMux     sync.Mutex
+	gameConfig     *models.GameConfig
+	configLoader   *persistence.ConfigLoader
+	basePath       string
+	authManager    *AuthManager        // Add auth manager for user authentication
+	matchmaker     *MatchmakingManager // Add matchmaking manager
+	sessionManager *SessionManager     // Add session manager for game management
 }
 
 // Client represents a connected client
@@ -38,14 +39,20 @@ type Client struct {
 
 // NewServer creates a new TCR server
 func NewServer(host string, port int, basePath string) *Server {
-	return &Server{
+	configLoader := persistence.NewConfigLoader(basePath)
+	server := &Server{
 		Host:         host,
 		Port:         port,
 		clients:      make(map[string]*Client),
 		basePath:     basePath,
-		configLoader: persistence.NewConfigLoader(basePath),
+		configLoader: configLoader,
 		authManager:  NewAuthManager(basePath), // Initialize auth manager
 	}
+
+	// Initialize the session manager
+	server.sessionManager = NewSessionManager(server, configLoader)
+
+	return server
 }
 
 // Start starts the server and begins accepting connections
@@ -243,6 +250,36 @@ func (s *Server) processMessage(client *Client, msg *network.Message) error {
 		// Add the client to the matchmaking queue
 		s.matchmaker.AddToWaitingPool(client)
 		return nil
+
+	case network.MessageTypeDeployTroop:
+		// Check if the client is in a game
+		if client.GameID == "" {
+			return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
+				Code:    400,
+				Message: "You are not in a game",
+			})
+		}
+
+		// Get the game session
+		_, exists := s.sessionManager.GetSession(client.GameID)
+		if !exists {
+			return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
+				Code:    400,
+				Message: "Game session not found",
+			})
+		}
+
+		// Parse the deploy troop payload
+		var deployPayload network.DeployTroopPayload
+		if err := network.ParsePayload(msg, &deployPayload); err != nil {
+			return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
+				Code:    400,
+				Message: "Invalid deploy troop payload: " + err.Error(),
+			})
+		}
+
+		// Forward the deploy command to the session manager for handling
+		return s.sessionManager.HandleDeployTroop(client, deployPayload.TroopID)
 
 	case network.MessageTypeQuit:
 		// If the user has authenticated, unregister them
