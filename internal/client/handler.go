@@ -61,7 +61,7 @@ func (c *Client) SetupDefaultHandlers() {
 		}
 
 		fmt.Println("\nInitial game state:")
-		printGameState(payload.InitialState)
+		printGameState(payload.InitialState, c.Username)
 
 		return nil
 	})
@@ -74,7 +74,7 @@ func (c *Client) SetupDefaultHandlers() {
 		}
 
 		fmt.Println("\nGame state updated:")
-		printGameState(&payload)
+		printGameState(&payload, c.Username)
 
 		return nil
 	})
@@ -126,121 +126,165 @@ func (c *Client) SetupDefaultHandlers() {
 }
 
 // printGameState prints the current game state
-func printGameState(state *network.GameStatePayload) {
+func printGameState(state *network.GameStatePayload, clientUsername string) {
 	if state == nil {
 		fmt.Println("No game state available")
 		return
 	}
 
-	// Draw a visual representation of the game board
 	fmt.Println("\n====== TEXT CLASH ROYALE GAME BOARD ======")
 
-	// Group towers by username for easier display
+	// Group towers and troops by username
 	playerTowers := make(map[string][]network.TowerInfo)
+	troopsByOwner := make(map[string][]network.TroopInfo)
+	var playerUsernames []string
+	playerMap := make(map[string]bool)
+
 	for _, tower := range state.Towers {
 		playerTowers[tower.OwnerUsername] = append(playerTowers[tower.OwnerUsername], tower)
-	}
-
-	// Print board header with player names
-	var players []string
-	for player := range playerTowers {
-		players = append(players, player)
-	}
-
-	if len(players) >= 2 {
-		fmt.Printf("\n%s %40s\n", players[0], players[1])
-		fmt.Println(strings.Repeat("-", 60))
-
-		// Find player towers
-		player1Towers := playerTowers[players[0]]
-		player2Towers := playerTowers[players[1]]
-
-		// Sort towers by position
-		sortTowersByPosition := func(towers []network.TowerInfo) []network.TowerInfo {
-			positionPriority := map[string]int{"guard1": 0, "guard2": 1, "king": 2}
-			sort.Slice(towers, func(i, j int) bool {
-				return positionPriority[towers[i].Position] < positionPriority[towers[j].Position]
-			})
-			return towers
+		if !playerMap[tower.OwnerUsername] {
+			playerUsernames = append(playerUsernames, tower.OwnerUsername)
+			playerMap[tower.OwnerUsername] = true
 		}
-
-		player1Towers = sortTowersByPosition(player1Towers)
-		player2Towers = sortTowersByPosition(player2Towers)
-
-		// Draw towers side by side
-		fmt.Println("TOWERS:")
-		for i := 0; i < 3 && i < len(player1Towers) && i < len(player2Towers); i++ {
-			p1Tower := player1Towers[i]
-			p2Tower := player2Towers[i]
-
-			// Create health bar representations
-			p1HealthPercent := float64(p1Tower.CurrentHP) / float64(p1Tower.MaxHP)
-			p2HealthPercent := float64(p2Tower.CurrentHP) / float64(p2Tower.MaxHP)
-
-			p1HealthBar := createHealthBar(p1HealthPercent, 10)
-			p2HealthBar := createHealthBar(p2HealthPercent, 10)
-
-			fmt.Printf("%-10s %s %4d/%-4d HP %15s %s %4d/%-4d HP\n",
-				p1Tower.Position,
-				p1HealthBar,
-				p1Tower.CurrentHP,
-				p1Tower.MaxHP,
-				p2Tower.Position,
-				p2HealthBar,
-				p2Tower.CurrentHP,
-				p2Tower.MaxHP)
+	}
+	for _, troop := range state.Troops {
+		troopsByOwner[troop.OwnerUsername] = append(troopsByOwner[troop.OwnerUsername], troop)
+		if !playerMap[troop.OwnerUsername] {
+			playerUsernames = append(playerUsernames, troop.OwnerUsername)
+			playerMap[troop.OwnerUsername] = true
 		}
 	}
 
-	// Print active troops
-	fmt.Println("\nACTIVE TROOPS:")
-	if len(state.Troops) == 0 {
-		fmt.Println("  No active troops")
-	} else {
-		// Group troops by owner
-		troopsByOwner := make(map[string][]network.TroopInfo)
-		for _, troop := range state.Troops {
-			troopsByOwner[troop.OwnerUsername] = append(troopsByOwner[troop.OwnerUsername], troop)
-		}
-
-		// Print troops for each player
-		for player, troops := range troopsByOwner {
-			fmt.Printf("\n%s's Troops:\n", player)
-			for _, troop := range troops {
-				targetInfo := ""
-				if troop.TargetTowerID != "" {
-					// Extract just the position part of the tower ID for clarity
-					parts := strings.Split(troop.TargetTowerID, "_")
-					if len(parts) > 1 {
-						targetInfo = fmt.Sprintf(" → targeting %s", parts[1])
-					} else {
-						targetInfo = fmt.Sprintf(" → targeting %s", troop.TargetTowerID)
-					}
-				}
-
-				// Create health bar
-				healthPercent := float64(troop.CurrentHP) / float64(troop.MaxHP)
-				healthBar := createHealthBar(healthPercent, 10)
-
-				fmt.Printf("  %-10s %s %4d/%-4d HP%s\n",
-					troop.Name,
-					healthBar,
-					troop.CurrentHP,
-					troop.MaxHP,
-					targetInfo)
+	// Determine which player is 'you' and which is 'opponent'
+	var you, opponent string
+	if len(playerUsernames) > 0 {
+		if playerUsernames[0] == clientUsername {
+			you = playerUsernames[0]
+			if len(playerUsernames) > 1 {
+				opponent = playerUsernames[1]
+			}
+		} else {
+			opponent = playerUsernames[0]
+			if len(playerUsernames) > 1 {
+				you = playerUsernames[1]
 			}
 		}
 	}
 
-	// Print mana info for Enhanced mode
-	if state.YourMana > 0 {
-		fmt.Println("\nMANA:")
-		fmt.Printf("Your Mana: %d\n", state.YourMana)
-		fmt.Printf("Opponent's Mana: %d\n", state.OpponentMana)
-		fmt.Printf("Time left: %d seconds\n", state.TimeLeft)
+	// Print board header
+	if you != "" && opponent != "" {
+		fmt.Printf("\n%-28s   VS   %28s\n", fmt.Sprintf("YOU (%s)", you), fmt.Sprintf("OPPONENT (%s)", opponent))
+	} else if you != "" {
+		fmt.Printf("\nYOU (%s)\n", you)
+	} else if opponent != "" {
+		fmt.Printf("\nOPPONENT (%s)\n", opponent)
+	}
+	fmt.Println(strings.Repeat("-", 60))
+
+	// Get tower lists
+	yourTowers := playerTowers[you]
+	opponentTowers := playerTowers[opponent]
+
+	// Sort towers by position (Guard1, Guard2, King)
+	sortTowersByPosition := func(towers []network.TowerInfo) []network.TowerInfo {
+		positionPriority := map[string]int{"guard1": 0, "guard2": 1, "king": 2, "unknown": 3}
+		sort.Slice(towers, func(i, j int) bool {
+			return positionPriority[towers[i].Position] < positionPriority[towers[j].Position]
+		})
+		return towers
 	}
 
-	fmt.Println("\n=========================================")
+	yourTowers = sortTowersByPosition(yourTowers)
+	opponentTowers = sortTowersByPosition(opponentTowers)
+
+	// Draw towers side by side
+	fmt.Println("TOWERS:")
+	maxTowers := max(len(yourTowers), len(opponentTowers))
+	for i := 0; i < maxTowers; i++ {
+		yTowerStr := "                          "
+		opTowerStr := "                          "
+
+		if i < len(yourTowers) {
+			t := yourTowers[i]
+			hpPercent := float64(t.CurrentHP) / float64(t.MaxHP)
+			hpBar := createHealthBar(hpPercent, 10)
+			yTowerStr = fmt.Sprintf("%-8s %s %4d/%-4d", t.Position, hpBar, t.CurrentHP, t.MaxHP)
+		}
+		if i < len(opponentTowers) {
+			t := opponentTowers[i]
+			hpPercent := float64(t.CurrentHP) / float64(t.MaxHP)
+			hpBar := createHealthBar(hpPercent, 10)
+			opTowerStr = fmt.Sprintf("%-8s %s %4d/%-4d", t.Position, hpBar, t.CurrentHP, t.MaxHP)
+		}
+		fmt.Printf("%-28s | %-28s\n", yTowerStr, opTowerStr)
+	}
+
+	// Print active troops
+	fmt.Println(strings.Repeat("-", 60))
+	fmt.Println("ACTIVE TROOPS:")
+
+	yourTroops := troopsByOwner[you]
+	opponentTroops := troopsByOwner[opponent]
+
+	if len(yourTroops) == 0 && len(opponentTroops) == 0 {
+		fmt.Println("  (No active troops on either side)")
+	} else {
+		// Print your troops
+		fmt.Printf("Your Troops (%s):\n", you)
+		if len(yourTroops) == 0 {
+			fmt.Println("  None")
+		} else {
+			for _, troop := range yourTroops {
+				printTroopInfo(troop, opponentTowers)
+			}
+		}
+
+		// Print opponent troops
+		fmt.Printf("\nOpponent Troops (%s):\n", opponent)
+		if len(opponentTroops) == 0 {
+			fmt.Println("  None")
+		} else {
+			for _, troop := range opponentTroops {
+				printTroopInfo(troop, yourTowers)
+			}
+		}
+	}
+
+	// Print mana info for Enhanced mode (if applicable)
+	if state.YourMana > 0 || state.OpponentMana > 0 || state.TimeLeft > 0 {
+		fmt.Println(strings.Repeat("-", 60))
+		fmt.Println("ENHANCED MODE INFO:")
+		fmt.Printf("  Your Mana: %d | Opponent Mana: %d | Time Left: %ds\n",
+			state.YourMana, state.OpponentMana, state.TimeLeft)
+	}
+
+	fmt.Println("=========================================")
+}
+
+// printTroopInfo prints details for a single troop
+func printTroopInfo(troop network.TroopInfo, opponentTowers []network.TowerInfo) {
+	targetInfo := ""
+	if troop.TargetTowerID != "" {
+		// Find the target tower's name/position for better display
+		targetName := troop.TargetTowerID // Fallback to ID
+		for _, t := range opponentTowers {
+			if t.ID == troop.TargetTowerID {
+				targetName = t.Position // Use position (king, guard1, guard2)
+				break
+			}
+		}
+		targetInfo = fmt.Sprintf(" -> %s", targetName)
+	}
+
+	healthPercent := float64(troop.CurrentHP) / float64(troop.MaxHP)
+	healthBar := createHealthBar(healthPercent, 10)
+
+	fmt.Printf("  %-10s %s %4d/%-4d HP%s\n",
+		troop.Name,
+		healthBar,
+		troop.CurrentHP,
+		troop.MaxHP,
+		targetInfo)
 }
 
 // createHealthBar generates a visual health bar based on percentage
@@ -368,4 +412,12 @@ func (c *Client) ParseCommand(input string) error {
 		// Treat as a chat message for now
 		return c.SendMessage(input)
 	}
+}
+
+// Helper function (optional, could be inline)
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

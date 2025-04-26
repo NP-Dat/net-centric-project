@@ -170,64 +170,64 @@ net-centric-project (text-clash-royale)/
 **Phase 4: Development Plan (Iterative)**
 
 *   **Sprint 0: Setup & Foundation (Requires Appendix Clarification First!)**
-    *    Finalize requirements based on clarifications.
-    *    Set up Go module project structure.
-    *    Define core data structures (`models`, `game.models`).
-    *    Define basic network `protocol` message types (JSON).
-    *    Implement basic TCP server (`cmd/tcr-server`, `internal/server`) capable of accepting connections.
-    *    Implement basic TCP client (`cmd/tcr-client`, `internal/client`) capable of connecting.
-    *    Implement basic `network/codec` for sending/receiving simple JSON messages.
-    *    Implement `persistence/storage` to load dummy `config/towers.json` and `config/troops.json`.
+    * [X]   Finalize requirements based on clarifications.
+    * [X]   Set up Go module project structure.
+    * [X]   Define core data structures (`models`, `game.models`).
+    * [X]   Define basic network `protocol` message types (JSON).
+    * [X]   Implement basic TCP server (`cmd/tcr-server`, `internal/server`) capable of accepting connections.
+    * [X]   Implement basic TCP client (`cmd/tcr-client`, `internal/client`) capable of connecting.
+    * [X]   Implement basic `network/codec` for sending/receiving simple JSON messages.
+    * [X]   Implement `persistence/storage` to load dummy `config/towers.json` and `config/troops.json`.
 
 *   **Sprint 1: Simple TCR - Connection & Game Setup**
-    *    Implement basic user authentication (`internal/server/auth`) - store hashed passwords in memory or basic files initially (`internal/persistence`).
-    *    Implement client-side login prompt and message sending.
-    *    Implement basic matchmaking (`internal/server/matchmaking`) - pair the first two authenticated users.
-    *    Implement game session creation (`internal/server/session`).
-    *    Implement sending initial game state (Simple TCR rules) to both clients upon match start.
-    *    Implement client-side display of the initial game board/state.
+    * [X]   Implement basic user authentication (`internal/server/auth`) - store hashed passwords in memory or basic files initially (`internal/persistence`).
+    * [X]   Implement client-side login prompt and message sending.
+    * [X]   Implement basic matchmaking (`internal/server/matchmaking`) - pair the first two authenticated users.
+    * [X]   Implement game session creation (`internal/server/session`).
+    * [X]   Implement sending initial game state (Simple TCR rules) to both clients upon match start.
+    * [X]   Implement client-side display of the initial game board/state.
 
 *   **Sprint 2: Simple TCR - Core Gameplay Loop**
-    *    Implement turn-based logic in `internal/game/logic_simple.go`.
-    *    Implement client command for deploying a troop (based on clarified rules).
-    *    Implement server-side handling of the deploy command.
-    *    Implement combat logic (`internal/game/combat.go`) including the Simple damage formula and targeting rules (Guard1 first).
-    *    Implement troop attack sequence (including "continue attacking" if a tower is destroyed - based on clarification).
-    *    Implement sending state updates (HP changes, troop/tower destruction, turn change) to clients.
-    *    Update client display to reflect game state changes.
-    *    Implement win condition checking for Simple TCR.
-    *    Implement game end message and basic session cleanup.
+    * [X]   Implement turn-based logic in `internal/game/logic_simple.go`.
+    * [X]   Implement client command for deploying a troop (based on clarified rules).
+    * [X]   Implement server-side handling of the deploy command.
+    * [X]   Implement combat logic (`internal/game/combat.go`) including the Simple damage formula and targeting rules (Guard1 first).
+    * [X]   Implement troop attack sequence (including "continue attacking" if a tower is destroyed - based on clarification).
+    * [X]   Implement sending state updates (HP changes, troop/tower destruction, turn change) to clients.
+    * [X]   Update client display to reflect game state changes.
+    * [u]   Implement win condition checking for Simple TCR.
+    * [u]   Implement game end message and basic session cleanup.
 
 *   **Sprint 3: Persistence & Refinement**
-    *    Implement robust JSON loading/saving for player data (`PlayerData` including hashed passwords) using `internal/persistence`.
-    *    Ensure troop/tower specs are loaded correctly from JSON `config` files (using the actual Appendix data).
-    *    Add basic error handling and logging (`pkg/logger` or standard `log` package).
-    *    Refine client text UI for better clarity.
-    *    Test Simple TCR thoroughly.
+    * [X]   Implement robust JSON loading/saving for player data (`PlayerData` including hashed passwords) using `internal/persistence`.
+    * []   Ensure troop/tower specs are loaded correctly from JSON `config` files (using the actual Appendix data).
+    * []   Add basic error handling and logging (`pkg/logger` or standard `log` package).
+    * []   Refine client text UI for better clarity.
+    * []   Test Simple TCR thoroughly.
 
 *   **Sprint 4: Enhanced TCR - Real-time & Core Mechanics**
-    *    Adapt the server game loop (`internal/game/logic_enhanced.go`) for real-time (3-minute timer).
-    *    Implement MANA system (cost for troop deployment, regeneration). Update `PlayerData` or `PlayerInGame`.
-    *    Update client command for deployment to check MANA.
-    *    Implement continuous attack logic (based on clarification - e.g., attacks every X seconds). Goroutines within the game session might manage troop actions.
-    *    Implement CRIT chance (`internal/game/combat.go`).
-    *    Implement Enhanced TCR targeting rules (Guard1 first).
-    *    Implement Enhanced TCR win conditions (King Tower destruction or timeout).
-    *    Update client to display MANA, timer, and handle more frequent state updates.
+    * []   Adapt the server game loop (`internal/game/logic_enhanced.go`) for real-time (3-minute timer).
+    * []   Implement MANA system (cost for troop deployment, regeneration). Update `PlayerData` or `PlayerInGame`.
+    * []   Update client command for deployment to check MANA.
+    * []   Implement continuous attack logic (based on clarification - e.g., attacks every X seconds). Goroutines within the game session might manage troop actions.
+    * []   Implement CRIT chance (`internal/game/combat.go`).
+    * []   Implement Enhanced TCR targeting rules (Guard1 first).
+    * []   Implement Enhanced TCR win conditions (King Tower destruction or timeout).
+    * []   Update client to display MANA, timer, and handle more frequent state updates.
 
 *   **Sprint 5: Enhanced TCR - Progression & Persistence**
-    *    Implement EXP awarding system (`internal/game/progression.go`).
-    *    Implement Leveling system (calculating required EXP, applying stat boosts - based on clarification).
-    *    Update `PlayerData` persistence to store/load EXP and Level.
-    *    Modify combat and game logic to use leveled stats for troops/towers.
-    *    Test Enhanced TCR thoroughly.
+    * []   Implement EXP awarding system (`internal/game/progression.go`).
+    * []   Implement Leveling system (calculating required EXP, applying stat boosts - based on clarification).
+    * []   Update `PlayerData` persistence to store/load EXP and Level.
+    * []   Modify combat and game logic to use leveled stats for troops/towers.
+    * []   Test Enhanced TCR thoroughly.
 
 *   **Sprint 6: Final Testing, Documentation & Demo Prep**
-    *    Conduct integration testing with multiple clients.
-    *    Test edge cases (disconnects, invalid input).
-    *    Write `README.md` explaining how to build and run the server and client.
-    *    Prepare for the demonstration, ensuring both Simple and Enhanced modes work as required.
-    *    Code cleanup and final review.
+    * []   Conduct integration testing with multiple clients.
+    * []   Test edge cases (disconnects, invalid input).
+    * []   Write `README.md` explaining how to build and run the server and client.
+    * []   Prepare for the demonstration, ensuring both Simple and Enhanced modes work as required.
+    * []   Code cleanup and final review.
 
 **Phase 5: Testing Strategy**
 

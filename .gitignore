@@ -1,9 +1,5 @@
 .env
 
-
-# Ignore player data files (because it is automatically generated when login a new player)
-data/players/
-
 # VS Code
 .vscode/
 

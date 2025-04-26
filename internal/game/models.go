@@ -31,11 +31,15 @@ type Game struct {
 	Players                [2]*PlayerInGame
 	GameState              GameState
 	GameMode               GameMode
-	CurrentTurnPlayerIndex int         // Index of the player whose turn it is (Simple mode)
-	StartTime              time.Time   // Game start time
-	EndTime                time.Time   // Game end time or expected end time
-	BoardState             *BoardState // Current state of the game board
-	Mutex                  sync.Mutex  // For thread safety
+	CurrentTurnPlayerIndex int                          // Index of the player whose turn it is (Simple mode)
+	StartTime              time.Time                    // Game start time
+	EndTime                time.Time                    // Game end time or expected end time
+	BoardState             *BoardState                  // Current state of the game board
+	Mutex                  sync.Mutex                   // For thread safety
+	TowerSpecs             map[string]*models.TowerSpec // Added Tower Specs
+	TroopSpecs             map[string]*models.TroopSpec // Added Troop Specs
+	WinnerID               string                       // ID of the winning player
+	LoserID                string                       // ID of the losing player
 }
 
 // PlayerInGame represents a player within the context of a game
@@ -86,7 +90,7 @@ type BoardState struct {
 }
 
 // NewGame creates a new game between two players
-func NewGame(id string, player1 *models.Player, player2 *models.Player, mode GameMode) *Game {
+func NewGame(id string, player1 *models.Player, player2 *models.Player, mode GameMode, towerSpecs map[string]*models.TowerSpec, troopSpecs map[string]*models.TroopSpec) *Game { // Added specs to constructor
 	game := &Game{
 		ID:        id,
 		GameState: GameStateWaiting,
@@ -97,7 +101,9 @@ func NewGame(id string, player1 *models.Player, player2 *models.Player, mode Gam
 			Towers:       make(map[string]*Tower),
 			ActiveTroops: make(map[string]*ActiveTroop),
 		},
-		CurrentTurnPlayerIndex: 0, // Player 1 starts in Simple mode
+		CurrentTurnPlayerIndex: 0,          // Player 1 starts in Simple mode
+		TowerSpecs:             towerSpecs, // Store specs
+		TroopSpecs:             troopSpecs, // Store specs
 	}
 
 	// Initialize players in game

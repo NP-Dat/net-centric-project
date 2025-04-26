@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/NP-Dat/net-centric-project/internal/game"
+	"github.com/NP-Dat/net-centric-project/internal/models"
 	"github.com/NP-Dat/net-centric-project/internal/network"
 	"github.com/NP-Dat/net-centric-project/internal/persistence"
 )
@@ -61,10 +62,28 @@ func (sm *SessionManager) CreateSession(player1, player2 *Client, gameID string,
 		return nil, fmt.Errorf("failed to load player2 data: %w", err)
 	}
 
-	// Create new game
-	gameInstance := game.NewGame(gameID, player1Data, player2Data, gameMode)
+	// Load game configuration needed for NewGame
+	gameConfig, err := sm.configLoader.LoadGameConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load game configuration for session creation: %w", err)
+	}
 
-	// Create session
+	// Convert config maps to maps of pointers as expected by game functions
+	towerSpecsPtr := make(map[string]*models.TowerSpec)
+	for id, spec := range gameConfig.Towers {
+		specCopy := spec // Create a copy to avoid taking address of loop variable
+		towerSpecsPtr[id] = &specCopy
+	}
+	troopSpecsPtr := make(map[string]*models.TroopSpec)
+	for id, spec := range gameConfig.Troops {
+		specCopy := spec // Create a copy
+		troopSpecsPtr[id] = &specCopy
+	}
+
+	// Create new game instance, passing the maps of pointers
+	gameInstance := game.NewGame(gameID, player1Data, player2Data, gameMode, towerSpecsPtr, troopSpecsPtr)
+
+	// Create session struct
 	session := &GameSession{
 		ID:           gameID,
 		Game:         gameInstance,
@@ -75,34 +94,43 @@ func (sm *SessionManager) CreateSession(player1, player2 *Client, gameID string,
 		LastActivity: time.Now(),
 	}
 
-	// Initialize game state from config
-	if err := sm.initializeGameState(session); err != nil {
-		return nil, fmt.Errorf("failed to initialize game state: %w", err)
+	// Initialize game state using the appropriate mode handler
+	switch gameMode {
+	case game.GameModeSimple:
+		simpleHandler := game.NewSimpleModeHandler(gameInstance)
+		// Pass the maps of pointers to StartGame as well
+		if err := simpleHandler.StartGame(player1Data, player2Data, towerSpecsPtr, troopSpecsPtr); err != nil {
+			return nil, fmt.Errorf("failed to start simple game mode: %w", err)
+		}
+		gameInstance.GameState = game.GameStateRunningSimple // Set state after successful start
+	// case game.GameModeEnhanced: // Add this when Enhanced mode is implemented
+	// 	enhancedHandler := game.NewEnhancedModeHandler(gameInstance)
+	// 	if err := enhancedHandler.StartGame(player1Data, player2Data, gameConfig.Towers, gameConfig.Troops); err != nil {
+	// 		return nil, fmt.Errorf("failed to start enhanced game mode: %w", err)
+	// 	}
+	// 	gameInstance.GameState = game.GameStateRunningEnhanced
+	default:
+		return nil, fmt.Errorf("unsupported game mode: %s", gameMode)
 	}
 
 	// Store session
 	sm.sessions[gameID] = session
 
-	// Set appropriate status based on game mode
-	if gameMode == game.GameModeSimple {
-		gameInstance.GameState = game.GameStateRunningSimple
-	} else {
-		gameInstance.GameState = game.GameStateRunningEnhanced
+	// Set start time (already set within StartGame methods, but can confirm here)
+	if gameInstance.StartTime.IsZero() {
+		gameInstance.StartTime = time.Now()
 	}
 
-	// Set start time
-	gameInstance.StartTime = time.Now()
-
-	// For enhanced mode, set the end time
-	if gameMode == game.GameModeEnhanced {
-		gameInstance.EndTime = gameInstance.StartTime.Add(3 * time.Minute)
-	}
+	// For enhanced mode, set the end time (should be handled by EnhancedModeHandler.StartGame)
+	// if gameMode == game.GameModeEnhanced {
+	// 	 gameInstance.EndTime = gameInstance.StartTime.Add(3 * time.Minute)
+	// }
 
 	// Associate clients with this game session
 	player1.GameID = gameID
 	player2.GameID = gameID
 
-	// Start game session in a goroutine
+	// Start game session processing (e.g., sending initial state)
 	go sm.runGameSession(session)
 
 	return session, nil
@@ -130,123 +158,27 @@ func (sm *SessionManager) EndSession(gameID string) {
 	// Set session as inactive
 	session.Active = false
 
-	// Set game state as finished
-	session.Game.GameState = game.GameStateFinished
+	// Set game state as finished if not already
+	if session.Game.GameState != game.GameStateFinished {
+		session.Game.GameState = game.GameStateFinished
+		if session.Game.EndTime.IsZero() {
+			session.Game.EndTime = time.Now()
+		}
+	}
 
 	// Remove session from active sessions
 	delete(sm.sessions, gameID)
 
-	// Notify players that the game has ended
-	log.Printf("Game session %s ended", gameID)
-}
-
-// initializeGameState sets up the initial game state with towers for each player
-func (sm *SessionManager) initializeGameState(session *GameSession) error {
-	// Load tower configurations
-	gameConfig, err := sm.configLoader.LoadGameConfig()
-	if err != nil {
-		return fmt.Errorf("failed to load game configuration: %w", err)
+	// Clear game ID from clients
+	if session.Player1 != nil {
+		session.Player1.GameID = ""
+	}
+	if session.Player2 != nil {
+		session.Player2.GameID = ""
 	}
 
-	// Create towers for player 1
-	kingTowerSpec := gameConfig.Towers["king_tower"]
-	guardTowerSpec := gameConfig.Towers["guard_tower"]
-
-	// Player 1 King Tower
-	kingTower1 := &game.Tower{
-		ID:            fmt.Sprintf("p1_king_%s", session.ID),
-		SpecID:        "king_tower",
-		Name:          "King Tower",
-		CurrentHP:     applyLevelMultiplier(kingTowerSpec.BaseHP, session.Game.Players[0].Level),
-		MaxHP:         applyLevelMultiplier(kingTowerSpec.BaseHP, session.Game.Players[0].Level),
-		ATK:           applyLevelMultiplier(kingTowerSpec.BaseATK, session.Game.Players[0].Level),
-		DEF:           applyLevelMultiplier(kingTowerSpec.BaseDEF, session.Game.Players[0].Level),
-		CritChance:    kingTowerSpec.CritChance,
-		OwnerPlayerID: session.Game.Players[0].ID,
-	}
-
-	// Player 1 Guard Tower 1
-	guardTower1_1 := &game.Tower{
-		ID:            fmt.Sprintf("p1_guard1_%s", session.ID),
-		SpecID:        "guard_tower",
-		Name:          "Guard Tower 1",
-		CurrentHP:     applyLevelMultiplier(guardTowerSpec.BaseHP, session.Game.Players[0].Level),
-		MaxHP:         applyLevelMultiplier(guardTowerSpec.BaseHP, session.Game.Players[0].Level),
-		ATK:           applyLevelMultiplier(guardTowerSpec.BaseATK, session.Game.Players[0].Level),
-		DEF:           applyLevelMultiplier(guardTowerSpec.BaseDEF, session.Game.Players[0].Level),
-		CritChance:    guardTowerSpec.CritChance,
-		OwnerPlayerID: session.Game.Players[0].ID,
-	}
-
-	// Player 1 Guard Tower 2
-	guardTower1_2 := &game.Tower{
-		ID:            fmt.Sprintf("p1_guard2_%s", session.ID),
-		SpecID:        "guard_tower",
-		Name:          "Guard Tower 2",
-		CurrentHP:     applyLevelMultiplier(guardTowerSpec.BaseHP, session.Game.Players[0].Level),
-		MaxHP:         applyLevelMultiplier(guardTowerSpec.BaseHP, session.Game.Players[0].Level),
-		ATK:           applyLevelMultiplier(guardTowerSpec.BaseATK, session.Game.Players[0].Level),
-		DEF:           applyLevelMultiplier(guardTowerSpec.BaseDEF, session.Game.Players[0].Level),
-		CritChance:    guardTowerSpec.CritChance,
-		OwnerPlayerID: session.Game.Players[0].ID,
-	}
-
-	// Player 2 King Tower
-	kingTower2 := &game.Tower{
-		ID:            fmt.Sprintf("p2_king_%s", session.ID),
-		SpecID:        "king_tower",
-		Name:          "King Tower",
-		CurrentHP:     applyLevelMultiplier(kingTowerSpec.BaseHP, session.Game.Players[1].Level),
-		MaxHP:         applyLevelMultiplier(kingTowerSpec.BaseHP, session.Game.Players[1].Level),
-		ATK:           applyLevelMultiplier(kingTowerSpec.BaseATK, session.Game.Players[1].Level),
-		DEF:           applyLevelMultiplier(kingTowerSpec.BaseDEF, session.Game.Players[1].Level),
-		CritChance:    kingTowerSpec.CritChance,
-		OwnerPlayerID: session.Game.Players[1].ID,
-	}
-
-	// Player 2 Guard Tower 1
-	guardTower2_1 := &game.Tower{
-		ID:            fmt.Sprintf("p2_guard1_%s", session.ID),
-		SpecID:        "guard_tower",
-		Name:          "Guard Tower 1",
-		CurrentHP:     applyLevelMultiplier(guardTowerSpec.BaseHP, session.Game.Players[1].Level),
-		MaxHP:         applyLevelMultiplier(guardTowerSpec.BaseHP, session.Game.Players[1].Level),
-		ATK:           applyLevelMultiplier(guardTowerSpec.BaseATK, session.Game.Players[1].Level),
-		DEF:           applyLevelMultiplier(guardTowerSpec.BaseDEF, session.Game.Players[1].Level),
-		CritChance:    guardTowerSpec.CritChance,
-		OwnerPlayerID: session.Game.Players[1].ID,
-	}
-
-	// Player 2 Guard Tower 2
-	guardTower2_2 := &game.Tower{
-		ID:            fmt.Sprintf("p2_guard2_%s", session.ID),
-		SpecID:        "guard_tower",
-		Name:          "Guard Tower 2",
-		CurrentHP:     applyLevelMultiplier(guardTowerSpec.BaseHP, session.Game.Players[1].Level),
-		MaxHP:         applyLevelMultiplier(guardTowerSpec.BaseHP, session.Game.Players[1].Level),
-		ATK:           applyLevelMultiplier(guardTowerSpec.BaseATK, session.Game.Players[1].Level),
-		DEF:           applyLevelMultiplier(guardTowerSpec.BaseDEF, session.Game.Players[1].Level),
-		CritChance:    guardTowerSpec.CritChance,
-		OwnerPlayerID: session.Game.Players[1].ID,
-	}
-
-	// Add towers to board state
-	session.Game.BoardState.Towers[kingTower1.ID] = kingTower1
-	session.Game.BoardState.Towers[guardTower1_1.ID] = guardTower1_1
-	session.Game.BoardState.Towers[guardTower1_2.ID] = guardTower1_2
-	session.Game.BoardState.Towers[kingTower2.ID] = kingTower2
-	session.Game.BoardState.Towers[guardTower2_1.ID] = guardTower2_1
-	session.Game.BoardState.Towers[guardTower2_2.ID] = guardTower2_2
-
-	// Add towers to player's tower list
-	session.Game.Players[0].Towers[kingTower1.ID] = kingTower1
-	session.Game.Players[0].Towers[guardTower1_1.ID] = guardTower1_1
-	session.Game.Players[0].Towers[guardTower1_2.ID] = guardTower1_2
-	session.Game.Players[1].Towers[kingTower2.ID] = kingTower2
-	session.Game.Players[1].Towers[guardTower2_1.ID] = guardTower2_1
-	session.Game.Players[1].Towers[guardTower2_2.ID] = guardTower2_2
-
-	return nil
+	// Notify players that the game has ended (already done in handleGameOver)
+	log.Printf("Game session %s ended and cleaned up", gameID)
 }
 
 // runGameSession handles the main game loop for a session
@@ -311,38 +243,43 @@ func convertGameStateToPayload(game *game.Game, viewerUsername string) *network.
 
 	// Add towers to payload
 	for _, tower := range game.BoardState.Towers {
-		// Figure out the position
-		position := "king"
-		if tower.SpecID == "guard_tower" {
-			if tower.ID[9:10] == "1" { // Assuming ID format like p1_guard1_...
-				position = "guard1"
-			} else {
-				position = "guard2"
-			}
-		}
-
 		// Find owning player's username
 		var ownerUsername string
+		var ownerID string // Store owner ID for position check
 		for _, player := range game.Players {
 			if player.ID == tower.OwnerPlayerID {
 				ownerUsername = player.Username
+				ownerID = player.ID
 				break
+			}
+		}
+
+		// Determine position based on tower ID and SpecID
+		position := "unknown"
+		switch tower.SpecID {
+		case "king_tower":
+			position = "king"
+		case "guard_tower":
+			if tower.ID == fmt.Sprintf("guard1_%s", ownerID) {
+				position = "guard1"
+			} else if tower.ID == fmt.Sprintf("guard2_%s", ownerID) {
+				position = "guard2"
 			}
 		}
 
 		towerInfo := network.TowerInfo{
 			ID:            tower.ID,
 			SpecID:        tower.SpecID,
-			Name:          tower.Name,
+			Name:          tower.Name, // Keep original name like "Guard Tower 1"
 			CurrentHP:     tower.CurrentHP,
 			MaxHP:         tower.MaxHP,
 			OwnerUsername: ownerUsername,
-			Position:      position,
+			Position:      position, // Use the determined position
 		}
 		payload.Towers = append(payload.Towers, towerInfo)
 	}
 
-	// Add troops to payload (none in initial state for Sprint 1)
+	// Add troops to payload
 	for _, troop := range game.BoardState.ActiveTroops {
 		// Find owning player's username
 		var ownerUsername string
@@ -366,20 +303,6 @@ func convertGameStateToPayload(game *game.Game, viewerUsername string) *network.
 	}
 
 	return payload
-}
-
-// applyLevelMultiplier applies the level multiplier to a base stat
-// Each level increases stats by 10% cumulatively
-func applyLevelMultiplier(baseStat int, level int) int {
-	if level <= 1 {
-		return baseStat
-	}
-	// Calculate 1.1^(level-1)
-	multiplier := 1.0
-	for i := 0; i < level-1; i++ {
-		multiplier *= 1.1
-	}
-	return int(float64(baseStat) * multiplier)
 }
 
 // HandleDeployTroop processes a troop deployment request from a client
@@ -537,71 +460,142 @@ func (sm *SessionManager) notifyTurnChange(session *GameSession) {
 
 // handleGameOver handles the end of a game
 func (sm *SessionManager) handleGameOver(session *GameSession) {
-	// In Sprint 2, just set the basic game over message
-	var winner string
+	var winnerUsername string
+	// var loserUsername string
 	var reason string
 
-	// Determine winner by checking king towers
-	for playerIndex, player := range session.Game.Players {
-		for _, tower := range player.Towers {
-			if tower.Name == "King Tower" && tower.CurrentHP <= 0 {
-				// This player lost because their king tower was destroyed
-				winnerIndex := (playerIndex + 1) % 2
-				if winnerIndex == 0 {
-					winner = session.Player1.Username
-				} else {
-					winner = session.Player2.Username
-				}
-				reason = "King Tower destroyed"
+	// Determine winner/loser from Game struct
+	if session.Game.WinnerID != "" {
+		if session.Game.WinnerID == session.Game.Players[0].ID { // Use Game.Players for ID
+			winnerUsername = session.Player1.Username
+			// loserUsername = session.Player2.Username
+		} else {
+			winnerUsername = session.Player2.Username
+			// loserUsername = session.Player1.Username
+		}
+		reason = "King Tower destroyed"
+	} else {
+		// Handle draw or other conditions if needed (not applicable for Simple mode win)
+		reason = "Game ended (unknown reason)" // Placeholder
+	}
+
+	// --- Calculate EXP --- (Simple Mode: Only EXP from destroyed towers)
+	p1ExpEarned := calculateDestroyedTowerExp(session.Game.BoardState, session.Game.Players[1].ID, session.Game.TowerSpecs)
+	p2ExpEarned := calculateDestroyedTowerExp(session.Game.BoardState, session.Game.Players[0].ID, session.Game.TowerSpecs)
+
+	// --- Update Player Data ---
+	// Load player data
+	p1Data, err1 := persistence.LoadPlayerData(sm.server.basePath, session.Player1.Username)
+	p2Data, err2 := persistence.LoadPlayerData(sm.server.basePath, session.Player2.Username)
+
+	if err1 != nil {
+		log.Printf("Error loading player data for %s: %v", session.Player1.Username, err1)
+	} else {
+		p1Data.EXP += p1ExpEarned
+	}
+	if err2 != nil {
+		log.Printf("Error loading player data for %s: %v", session.Player2.Username, err2)
+	} else {
+		p2Data.EXP += p2ExpEarned
+	}
+
+	// Check for level ups and save data
+	p1LeveledUp := false
+	p2LeveledUp := false
+
+	if p1Data != nil {
+		for {
+			requiredExp := models.CalculateRequiredExp(p1Data.Level)
+			if p1Data.EXP >= requiredExp {
+				p1Data.Level++
+				p1Data.EXP -= requiredExp
+				p1LeveledUp = true
+			} else {
 				break
 			}
 		}
+		if err := persistence.SavePlayerData(sm.server.basePath, p1Data); err != nil {
+			log.Printf("Error saving player data for %s: %v", p1Data.Username, err)
+		}
 	}
 
-	// Create game over payloads
-	var p1Exp int
-	if winner == session.Player1.Username {
-		p1Exp = 200
-	} else {
-		p1Exp = 0
+	if p2Data != nil {
+		for {
+			requiredExp := models.CalculateRequiredExp(p2Data.Level)
+			if p2Data.EXP >= requiredExp {
+				p2Data.Level++
+				p2Data.EXP -= requiredExp
+				p2LeveledUp = true
+			} else {
+				break
+			}
+		}
+		if err := persistence.SavePlayerData(sm.server.basePath, p2Data); err != nil {
+			log.Printf("Error saving player data for %s: %v", p2Data.Username, err)
+		}
 	}
 
-	var p2Exp int
-	if winner == session.Player2.Username {
-		p2Exp = 200
-	} else {
-		p2Exp = 0
+	// Prepare game over payloads with updated data
+	p1NewTotalExp := 0
+	p1NewLevel := 0
+	if p1Data != nil {
+		p1NewTotalExp = p1Data.EXP
+		p1NewLevel = p1Data.Level
+	}
+	p2NewTotalExp := 0
+	p2NewLevel := 0
+	if p2Data != nil {
+		p2NewTotalExp = p2Data.EXP
+		p2NewLevel = p2Data.Level
 	}
 
 	p1GameOver := &network.GameOverPayload{
-		Winner:      winner,
+		Winner:      winnerUsername,
 		Reason:      reason,
-		ExpEarned:   p1Exp,
-		NewTotalExp: 0,
-		NewLevel:    0,
-		LeveledUp:   false,
+		ExpEarned:   p1ExpEarned,
+		NewTotalExp: p1NewTotalExp,
+		NewLevel:    p1NewLevel,
+		LeveledUp:   p1LeveledUp,
 	}
 
 	p2GameOver := &network.GameOverPayload{
-		Winner:      winner,
+		Winner:      winnerUsername,
 		Reason:      reason,
-		ExpEarned:   p2Exp,
-		NewTotalExp: 0,
-		NewLevel:    0,
-		LeveledUp:   false,
+		ExpEarned:   p2ExpEarned,
+		NewTotalExp: p2NewTotalExp,
+		NewLevel:    p2NewLevel,
+		LeveledUp:   p2LeveledUp,
 	}
 
 	// Send game over messages
-	err := session.Player1.Codec.Send(network.MessageTypeGameOver, p1GameOver)
-	if err != nil {
-		log.Printf("Error sending game over to player 1: %v", err)
+	if session.Player1 != nil && session.Player1.Codec != nil {
+		err := session.Player1.Codec.Send(network.MessageTypeGameOver, p1GameOver)
+		if err != nil {
+			log.Printf("Error sending game over to player %s: %v", session.Player1.Username, err)
+		}
 	}
 
-	err = session.Player2.Codec.Send(network.MessageTypeGameOver, p2GameOver)
-	if err != nil {
-		log.Printf("Error sending game over to player 2: %v", err)
+	if session.Player2 != nil && session.Player2.Codec != nil {
+		err := session.Player2.Codec.Send(network.MessageTypeGameOver, p2GameOver)
+		if err != nil {
+			log.Printf("Error sending game over to player %s: %v", session.Player2.Username, err)
+		}
 	}
 
-	// End the session
+	// End the session (cleanup)
 	sm.EndSession(session.ID)
+}
+
+// calculateDestroyedTowerExp calculates EXP earned from destroying opponent towers
+func calculateDestroyedTowerExp(board *game.BoardState, opponentPlayerID string, towerSpecs map[string]*models.TowerSpec) int {
+	expGained := 0
+	for _, tower := range board.Towers {
+		if tower.OwnerPlayerID == opponentPlayerID && tower.CurrentHP <= 0 {
+			spec, exists := towerSpecs[tower.SpecID]
+			if exists {
+				expGained += spec.ExpYield
+			}
+		}
+	}
+	return expGained
 }
