@@ -13,6 +13,11 @@ This document provides instructions on how to execute the server and client, as 
    ```bash
    go run main.go
    ```
+   
+   You can also specify a custom log level:
+   ```bash
+   go run main.go --logLevel=debug
+   ```
 4. The server will start and listen for incoming client connections. You should see a message indicating the server is running, e.g., `Server started on localhost:8080`.
 
 ## Running the Client
@@ -25,6 +30,11 @@ This document provides instructions on how to execute the server and client, as 
 3. Run the client:
    ```bash
    go run main.go
+   ```
+   
+   You can also specify a custom log level:
+   ```bash
+   go run main.go --logLevel=debug
    ```
 4. The client will attempt to connect to the server. Once connected, you will see a prompt for interaction.
 
@@ -62,7 +72,21 @@ After connecting to the server, the client can execute the following commands:
   You have been added to the matchmaking queue. Waiting for opponent...
   ```
 
-### 3. Send a Message
+### 3. Deploy a Troop
+- Command: `deploy <troop_id>`
+- Description: Deploys a troop during an active game.
+- Steps:
+  1. Ensure you are logged in and in an active game.
+  2. Type `deploy` followed by the troop type.
+  3. Available troops: pawn, bishop, rook, knight, prince, queen
+- Example:
+  ```
+  > deploy knight
+  ⚔️ Deploying Knight...
+  ```
+- Note: You can only deploy troops during your turn in Simple mode, or if you have enough mana in Enhanced mode.
+
+### 4. Send a Message
 - Command: `send <message>`
 - Description: Sends a chat message to all connected clients.
 - Steps:
@@ -74,7 +98,7 @@ After connecting to the server, the client can execute the following commands:
   Message sent
   ```
 
-### 4. Quit
+### 5. Quit
 - Command: `quit` or `exit`
 - Description: Disconnects the client from the server.
 - Steps:
@@ -85,22 +109,52 @@ After connecting to the server, the client can execute the following commands:
   Disconnecting from server...
   ```
 
-### 5. Help
+### 6. Help
 - Command: `help`
 - Description: Displays a list of available commands.
 - Example:
   ```
   > help
   Available commands:
-    login - Login to the server interactively
+    login <username> <password> - Log in to the server
     join - Join the matchmaking queue
-    send <message> - Send a message to the server
-    quit/exit - Disconnect and quit
-    help - Show this help message
+    deploy <troop> - Deploy a troop in the current game
+    quit - Disconnect from the server
+    help - Display this help message
   ```
+
+### 7. Change Log Level (Debug Command)
+- Command: `debug loglevel <level>`
+- Description: Changes the logging verbosity level at runtime.
+- Available levels: debug, info, warn, error
+- Steps:
+  1. Type `debug loglevel` followed by the desired log level.
+- Example:
+  ```
+  > debug loglevel debug
+  Log level set to DEBUG
+  ```
+- Note: This command is useful for troubleshooting. Higher verbosity (debug) shows more details, while lower verbosity (error) shows only critical issues.
+
+## Log Levels
+
+When starting the client or server, you can specify the desired log level:
+
+| Log Level | Description                                              |
+|-----------|----------------------------------------------------------|
+| debug     | Most verbose. Shows all messages including detailed info. |
+| info      | Standard level. Shows normal operational messages.        |
+| warn      | Shows warnings and more severe issues only.              |
+| error     | Shows only error messages and critical failures.         |
+
+Example of setting log level when starting the client:
+```bash
+go run main.go --logLevel=debug
+```
 
 ## Notes
 - Ensure the server is running before starting the client.
 - If the client disconnects unexpectedly, restart the client and log in again.
 - Matchmaking requires at least two clients to join the queue.
 - `ctrl + C` for in Server terminal to close the Server.
+

@@ -195,15 +195,14 @@ net-centric-project (text-clash-royale)/
     * [X]   Implement troop attack sequence (including "continue attacking" if a tower is destroyed - based on clarification).
     * [X]   Implement sending state updates (HP changes, troop/tower destruction, turn change) to clients.
     * [X]   Update client display to reflect game state changes.
-    * [u]   Implement win condition checking for Simple TCR.
-    * [u]   Implement game end message and basic session cleanup.
+    * [X]   Implement win condition checking for Simple TCR.
+    * [X]   Implement game end message and basic session cleanup.
 
 *   **Sprint 3: Persistence & Refinement**
     * [X]   Implement robust JSON loading/saving for player data (`PlayerData` including hashed passwords) using `internal/persistence`.
-    * []   Ensure troop/tower specs are loaded correctly from JSON `config` files (using the actual Appendix data).
-    * []   Add basic error handling and logging (`pkg/logger` or standard `log` package).
-    * []   Refine client text UI for better clarity.
-    * []   Test Simple TCR thoroughly.
+    * [X]   Ensure troop/tower specs are loaded correctly from JSON `config` files (using the actual Appendix data).
+    * [X]   Add basic error handling and logging (`pkg/logger` or standard `log` package).
+    * [o]   Test Simple TCR thoroughly.
 
 *   **Sprint 4: Enhanced TCR - Real-time & Core Mechanics**
     * []   Adapt the server game loop (`internal/game/logic_enhanced.go`) for real-time (3-minute timer).

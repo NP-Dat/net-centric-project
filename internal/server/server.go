@@ -2,7 +2,6 @@ package server
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -10,6 +9,7 @@ import (
 	"github.com/NP-Dat/net-centric-project/internal/models"
 	"github.com/NP-Dat/net-centric-project/internal/network"
 	"github.com/NP-Dat/net-centric-project/internal/persistence"
+	"github.com/NP-Dat/net-centric-project/pkg/logger"
 )
 
 // Server represents the TCR game server
@@ -61,6 +61,7 @@ func (s *Server) Start() error {
 	var err error
 	s.gameConfig, err = s.configLoader.LoadGameConfig()
 	if err != nil {
+		logger.Server.Error("Failed to load game configuration: %v", err)
 		return fmt.Errorf("failed to load game configuration: %w", err)
 	}
 
@@ -70,10 +71,11 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.Host, s.Port)
 	s.listener, err = net.Listen("tcp", addr)
 	if err != nil {
+		logger.Server.Error("Failed to start server on %s: %v", addr, err)
 		return fmt.Errorf("failed to start server on %s: %w", addr, err)
 	}
 
-	log.Printf("Server started on %s", addr)
+	logger.Server.Info("Server started on %s", addr)
 
 	// Accept connections in a goroutine
 	go s.acceptConnections()
@@ -86,6 +88,7 @@ func (s *Server) Stop() error {
 	if s.listener != nil {
 		err := s.listener.Close()
 		if err != nil {
+			logger.Server.Error("Failed to close listener: %v", err)
 			return fmt.Errorf("failed to close listener: %w", err)
 		}
 
@@ -96,6 +99,7 @@ func (s *Server) Stop() error {
 		}
 		s.clients = make(map[string]*Client)
 		s.clientsMux.Unlock()
+		logger.Server.Info("All client connections closed")
 	}
 
 	return nil
@@ -106,12 +110,14 @@ func (s *Server) acceptConnections() {
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
-			log.Printf("Error accepting connection: %v", err)
 			if opErr, ok := err.(*net.OpError); ok && opErr.Temporary() {
 				// If it's a temporary error, wait a bit and try again
+				logger.Server.Warn("Temporary error accepting connection: %v. Retrying in 1 second...", err)
 				time.Sleep(time.Second)
 				continue
 			}
+
+			logger.Server.Error("Error accepting connection: %v", err)
 			// If the listener was closed, break out of the loop
 			break
 		}
@@ -129,6 +135,8 @@ func (s *Server) acceptConnections() {
 		s.clients[client.ID] = client
 		s.clientsMux.Unlock()
 
+		logger.Server.Info("New connection accepted from %s, assigned client ID: %s", conn.RemoteAddr(), client.ID)
+
 		// Handle client in a goroutine
 		go s.handleClient(client)
 	}
@@ -137,6 +145,11 @@ func (s *Server) acceptConnections() {
 // handleClient manages communication with a connected client
 func (s *Server) handleClient(client *Client) {
 	defer func() {
+		// Handle panics
+		if r := recover(); r != nil {
+			logger.Server.Error("Panic in handleClient: %v", r)
+		}
+
 		// Remove client from clients map when disconnected
 		s.clientsMux.Lock()
 		delete(s.clients, client.ID)
@@ -144,10 +157,10 @@ func (s *Server) handleClient(client *Client) {
 
 		// Close the connection
 		client.Conn.Close()
-		log.Printf("Client %s disconnected", client.ID)
+		logger.Server.Info("Client %s disconnected", client.ID)
 	}()
 
-	log.Printf("New client connected: %s from %s", client.ID, client.Conn.RemoteAddr())
+	logger.Server.Info("New client connected: %s from %s", client.ID, client.Conn.RemoteAddr())
 
 	// Send a welcome message
 	welcomePayload := &network.GameEventPayload{
@@ -157,7 +170,7 @@ func (s *Server) handleClient(client *Client) {
 
 	err := client.Codec.Send(network.MessageTypeGameEvent, welcomePayload)
 	if err != nil {
-		log.Printf("Error sending welcome message to client %s: %v", client.ID, err)
+		logger.Server.Error("Error sending welcome message to client %s: %v", client.ID, err)
 		return
 	}
 
@@ -165,20 +178,24 @@ func (s *Server) handleClient(client *Client) {
 	for {
 		msg, err := client.Codec.Receive()
 		if err != nil {
-			log.Printf("Error receiving message from client %s: %v", client.ID, err)
+			logger.Server.Error("Error receiving message from client %s: %v", client.ID, err)
 			return
 		}
 
+		logger.Server.Debug("Received message from client %s: type=%s", client.ID, msg.Type)
+
 		// Process the message
 		if err := s.processMessage(client, msg); err != nil {
-			log.Printf("Error processing message from client %s: %v", client.ID, err)
+			logger.Server.Error("Error processing message from client %s: %v", client.ID, err)
 
 			// Send error message to client
 			errorPayload := &network.ErrorPayload{
 				Code:    500, // Internal server error
 				Message: "Error processing your request",
 			}
-			client.Codec.Send(network.MessageTypeError, errorPayload)
+			if sendErr := client.Codec.Send(network.MessageTypeError, errorPayload); sendErr != nil {
+				logger.Server.Error("Failed to send error message to client %s: %v", client.ID, sendErr)
+			}
 
 			// For critical errors, disconnect the client
 			if err.Error() == "critical error" {
@@ -194,13 +211,17 @@ func (s *Server) processMessage(client *Client, msg *network.Message) error {
 	case network.MessageTypeLogin:
 		var loginPayload network.LoginPayload
 		if err := network.ParsePayload(msg, &loginPayload); err != nil {
+			logger.Server.Error("Invalid login payload from client %s: %v", client.ID, err)
 			return err
 		}
+
+		logger.Server.Info("Login attempt from client %s with username: %s", client.ID, loginPayload.Username)
 
 		// Authenticate the user using our AuthManager
 		playerData, err := s.authManager.AuthenticateUser(loginPayload.Username, loginPayload.Password)
 		if err != nil {
 			// Authentication failed
+			logger.Server.Warn("Authentication failed for username '%s': %v", loginPayload.Username, err)
 			authResultPayload := &network.AuthResultPayload{
 				Success: false,
 				Message: err.Error(),
@@ -209,10 +230,12 @@ func (s *Server) processMessage(client *Client, msg *network.Message) error {
 		}
 
 		// Authentication successful
+		logger.Server.Info("Authentication successful for user: %s", playerData.Username)
 		client.Username = playerData.Username
 
 		// Register the user as active
 		if err := s.authManager.RegisterActiveUser(playerData.Username, client.ID); err != nil {
+			logger.Server.Error("Failed to register active user %s: %v", playerData.Username, err)
 			authResultPayload := &network.AuthResultPayload{
 				Success: false,
 				Message: err.Error(),
@@ -228,6 +251,7 @@ func (s *Server) processMessage(client *Client, msg *network.Message) error {
 		}
 
 		if err := client.Codec.Send(network.MessageTypeAuthResult, authResultPayload); err != nil {
+			logger.Server.Error("Failed to send authentication result to client %s: %v", client.ID, err)
 			return err
 		}
 
@@ -241,11 +265,14 @@ func (s *Server) processMessage(client *Client, msg *network.Message) error {
 	case network.MessageTypeJoinQueue:
 		// Check if the client is authenticated
 		if client.Username == "" {
+			logger.Server.Warn("Unauthenticated client %s attempted to join matchmaking queue", client.ID)
 			return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
 				Code:    401,
 				Message: "You must be logged in to join matchmaking",
 			})
 		}
+
+		logger.Server.Info("Client %s (%s) joining matchmaking queue", client.ID, client.Username)
 
 		// Add the client to the matchmaking queue
 		s.matchmaker.AddToWaitingPool(client)
@@ -254,6 +281,7 @@ func (s *Server) processMessage(client *Client, msg *network.Message) error {
 	case network.MessageTypeDeployTroop:
 		// Check if the client is in a game
 		if client.GameID == "" {
+			logger.Server.Warn("Client %s attempted to deploy a troop while not in a game", client.ID)
 			return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
 				Code:    400,
 				Message: "You are not in a game",
@@ -263,6 +291,7 @@ func (s *Server) processMessage(client *Client, msg *network.Message) error {
 		// Get the game session
 		_, exists := s.sessionManager.GetSession(client.GameID)
 		if !exists {
+			logger.Server.Error("Client %s referred to non-existent game session: %s", client.ID, client.GameID)
 			return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
 				Code:    400,
 				Message: "Game session not found",
@@ -272,11 +301,14 @@ func (s *Server) processMessage(client *Client, msg *network.Message) error {
 		// Parse the deploy troop payload
 		var deployPayload network.DeployTroopPayload
 		if err := network.ParsePayload(msg, &deployPayload); err != nil {
+			logger.Server.Error("Invalid deploy troop payload from client %s: %v", client.ID, err)
 			return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
 				Code:    400,
 				Message: "Invalid deploy troop payload: " + err.Error(),
 			})
 		}
+
+		logger.Server.Info("Client %s (%s) deploying troop: %s", client.ID, client.Username, deployPayload.TroopID)
 
 		// Forward the deploy command to the session manager for handling
 		return s.sessionManager.HandleDeployTroop(client, deployPayload.TroopID)
@@ -284,15 +316,19 @@ func (s *Server) processMessage(client *Client, msg *network.Message) error {
 	case network.MessageTypeQuit:
 		// If the user has authenticated, unregister them
 		if client.Username != "" {
+			logger.Server.Info("Client %s (%s) is quitting", client.ID, client.Username)
 			s.authManager.UnregisterActiveUser(client.Username)
 			// Also remove them from the matchmaking queue
 			s.matchmaker.RemoveFromWaitingPool(client.ID)
+		} else {
+			logger.Server.Info("Unauthenticated client %s is quitting", client.ID)
 		}
 		return fmt.Errorf("critical error") // This will cause the client to be disconnected
 
 	default:
 		// Handle messages from authenticated users
 		if client.Username == "" {
+			logger.Server.Warn("Unauthenticated client %s sent message of type %s", client.ID, msg.Type)
 			return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
 				Code:    401,
 				Message: "You must be logged in first",
@@ -303,6 +339,7 @@ func (s *Server) processMessage(client *Client, msg *network.Message) error {
 		if msg.Type == network.MessageTypeGameEvent {
 			var payload network.GameEventPayload
 			if err := network.ParsePayload(msg, &payload); err != nil {
+				logger.Server.Error("Invalid game event payload from client %s: %v", client.ID, err)
 				return err
 			}
 
@@ -312,12 +349,14 @@ func (s *Server) processMessage(client *Client, msg *network.Message) error {
 				Time:    time.Now(),
 			}
 
+			logger.Server.Debug("Broadcasting chat message from %s: %s", client.Username, payload.Message)
+
 			// Broadcast to all clients (simple chat implementation)
 			s.clientsMux.Lock()
 			for _, c := range s.clients {
 				if c.Username != "" { // Only send to authenticated clients
 					if err := c.Codec.Send(network.MessageTypeGameEvent, messagePayload); err != nil {
-						log.Printf("Error sending message to client %s: %v", c.ID, err)
+						logger.Server.Error("Error sending message to client %s: %v", c.ID, err)
 					}
 				}
 			}
@@ -327,6 +366,7 @@ func (s *Server) processMessage(client *Client, msg *network.Message) error {
 		}
 
 		// For other message types, just acknowledge receipt
+		logger.Server.Debug("Received unhandled message type %s from client %s", msg.Type, client.ID)
 		gameEventPayload := &network.GameEventPayload{
 			Message: fmt.Sprintf("Received message of type %s", msg.Type),
 			Time:    time.Now(),
