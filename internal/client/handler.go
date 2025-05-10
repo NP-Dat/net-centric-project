@@ -184,6 +184,35 @@ func (c *Client) SetupDefaultHandlers() {
 		return nil
 	})
 
+	// Handle troop choices from server
+	c.RegisterHandler(network.MessageTypeTroopChoices, func(msg *network.Message) error {
+		var payload network.TroopChoicesPayload
+		if err := network.ParsePayload(msg, &payload); err != nil {
+			logger.Client.Error("Failed to parse troop choices: %v", err)
+			fmt.Printf("Error: Could not process troop choices from server\n")
+			return err
+		}
+
+		c.SetCurrentTroopChoices(payload.Choices) // Store choices in client
+
+		if len(payload.Choices) == 0 {
+			fmt.Println("\n📋 No troops available to deploy this turn.")
+			// If it's our turn, this is unusual, might mean game logic issue or all troops used up
+			// Or perhaps it implies skipping deployment phase.
+			// For now, just inform. Client might need to send a "skip" or "no_action" if applicable.
+			return nil
+		}
+
+		fmt.Println("\n📋 Choose a troop to deploy:")
+		for i, choice := range payload.Choices {
+			fmt.Printf("  %d. %s (ID: %s, Mana: %d)\n", i+1, choice.Name, choice.ID, choice.ManaCost)
+		}
+		fmt.Println("  Use 'deploy <troop_id_or_number>' to deploy.") // Update prompt guidance
+		// Example: deploy pawn OR deploy 1
+
+		return nil
+	})
+
 	logger.Client.Info("Default message handlers set up")
 }
 

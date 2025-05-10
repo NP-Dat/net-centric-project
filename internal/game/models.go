@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/NP-Dat/net-centric-project/internal/models"
+	"github.com/NP-Dat/net-centric-project/internal/network"
 )
 
 // GameState represents the current state of a game
@@ -44,29 +45,31 @@ type Game struct {
 
 // PlayerInGame represents a player within the context of a game
 type PlayerInGame struct {
-	ID           string
-	Username     string
-	Level        int
-	GameID       string
-	CurrentMana  int // For Enhanced mode
-	Towers       map[string]*Tower
-	ActiveTroops map[string]*ActiveTroop
-	PlayerIndex  int         // 0 or 1
-	Connection   interface{} // Will be replaced with net.Conn in implementation
+	ID                  string
+	Username            string
+	Level               int
+	GameID              string
+	CurrentMana         int // For Enhanced mode
+	Towers              map[string]*Tower
+	ActiveTroops        map[string]*ActiveTroop
+	PlayerIndex         int                       // 0 or 1
+	Connection          interface{}               // Will be replaced with net.Conn in implementation
+	OfferedTroopChoices []network.TroopChoiceInfo // For Simple Mode: choices offered at the start of the turn
 }
 
 // Tower represents an instance of a tower in the game
 type Tower struct {
-	ID            string
-	SpecID        string // Reference to the tower spec
-	Name          string
-	CurrentHP     int
-	MaxHP         int
-	ATK           int
-	DEF           int
-	CritChance    float64
-	OwnerPlayerID string
-	TargetID      string // ID of the troop currently targeting this tower
+	ID                    string
+	SpecID                string // Reference to the tower spec
+	Name                  string
+	CurrentHP             int
+	MaxHP                 int
+	ATK                   int
+	DEF                   int
+	CritChance            float64
+	OwnerPlayerID         string
+	TargetID              string // ID of the troop currently targeting this tower
+	LastAttackedByTroopID string // NEW: ID of the troop that last attacked this tower in the current turn for counterattack
 }
 
 // ActiveTroop represents a troop instance that has been deployed in the game

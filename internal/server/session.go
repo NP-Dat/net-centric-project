@@ -232,6 +232,65 @@ func (sm *SessionManager) sendInitialGameState(session *GameSession) {
 
 	// Log game start
 	log.Printf("Game %s started between %s and %s", session.ID, session.Player1.Username, session.Player2.Username)
+
+	// Send initial troop choices to Player 1 (who starts)
+	if session.GameMode == game.GameModeSimple && session.Game.CurrentTurnPlayerIndex == 0 {
+		sm.sendTroopChoicesToCurrentPlayer(session) // Player 1 is players[0]
+	}
+}
+
+// sendTroopChoicesToCurrentPlayer generates and sends troop choices to the player whose turn it currently is.
+func (sm *SessionManager) sendTroopChoicesToCurrentPlayer(session *GameSession) {
+	if session.Game == nil || session.Game.GameState != game.GameStateRunningSimple {
+		log.Printf("[Session %s] Cannot send troop choices: game not running or not simple mode.", session.ID)
+		return
+	}
+
+	playerIndex := session.Game.CurrentTurnPlayerIndex
+	currentPlayerInGame := session.Game.Players[playerIndex]
+	if currentPlayerInGame == nil {
+		log.Printf("[Session %s] Cannot send troop choices: current player at index %d is nil.", session.ID, playerIndex)
+		return
+	}
+
+	// Get the game handler (assuming SimpleModeHandler for now)
+	// This might need a more robust way to get the correct handler if multiple modes are active
+	simpleHandler := game.NewSimpleModeHandler(session.Game) // Create a new handler instance for this operation
+
+	troopChoicesPayload, err := simpleHandler.GenerateAndStoreTroopChoices(currentPlayerInGame)
+	if err != nil {
+		log.Printf("[Session %s] Error generating troop choices for player %s: %v", session.ID, currentPlayerInGame.Username, err)
+		// Optionally, send an error message to the client if appropriate
+		return
+	}
+
+	if troopChoicesPayload == nil || len(troopChoicesPayload.Choices) == 0 {
+		log.Printf("[Session %s] No troop choices generated for player %s (perhaps no troops available).", session.ID, currentPlayerInGame.Username)
+		// Send an empty choices message or a specific notification if desired
+		// For now, we can send it. Client should handle empty choices gracefully.
+	}
+
+	// Determine which client (Player1 or Player2 of the session) is the current player
+	var targetClient *Client
+	if session.Player1.Username == currentPlayerInGame.Username { // Compare by a unique identifier like Username or ID
+		targetClient = session.Player1
+	} else if session.Player2.Username == currentPlayerInGame.Username {
+		targetClient = session.Player2
+	} else {
+		log.Printf("[Session %s] Critical error: Could not match PlayerInGame %s to a session client.", session.ID, currentPlayerInGame.Username)
+		return
+	}
+
+	if targetClient == nil || targetClient.Codec == nil {
+		log.Printf("[Session %s] Cannot send troop choices to %s: client or codec is nil.", session.ID, currentPlayerInGame.Username)
+		return
+	}
+
+	log.Printf("[Session %s] Sending troop choices to %s: %+v", session.ID, targetClient.Username, troopChoicesPayload.Choices)
+	err = targetClient.Codec.Send(network.MessageTypeTroopChoices, troopChoicesPayload)
+	if err != nil {
+		log.Printf("[Session %s] Error sending troop choices to player %s: %v", session.ID, targetClient.Username, err)
+	}
 }
 
 // convertGameStateToPayload converts a game.Game state to a network.GameStatePayload
@@ -310,106 +369,91 @@ func (sm *SessionManager) HandleDeployTroop(client *Client, troopID string) erro
 	// Get the session for this client
 	session, exists := sm.GetSession(client.GameID)
 	if !exists {
-		return fmt.Errorf("game session not found")
+		return fmt.Errorf("game session not found or not active for client %s", client.Username)
 	}
 
-	// Check if the game is in Simple mode
-	if session.GameMode != game.GameModeSimple {
-		return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
-			Code:    400,
-			Message: "Deploy command only supported in Simple mode for Sprint 2",
-		})
+	// Ensure the game is in the correct state (RunningSimple)
+	if session.Game.GameState != game.GameStateRunningSimple {
+		return fmt.Errorf("game %s is not in RunningSimple state", session.ID)
 	}
 
-	// Verify the game is active
-	if !session.Active || session.Game.GameState != game.GameStateRunningSimple {
-		return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
-			Code:    400,
-			Message: "Game is not active",
-		})
-	}
-
-	// Determine which player is making the request
-	var playerIndex int
-	var otherPlayerClient *Client
-
-	if client.Username == session.Player1.Username {
+	// Determine player index for the game logic
+	playerIndex := -1
+	var otherPlayerClient *Client // Re-declare otherPlayerClient
+	if session.Player1.Username == client.Username {
 		playerIndex = 0
-		otherPlayerClient = session.Player2
-	} else if client.Username == session.Player2.Username {
+		otherPlayerClient = session.Player2 // Assign otherPlayerClient
+	} else if session.Player2.Username == client.Username {
 		playerIndex = 1
-		otherPlayerClient = session.Player1
+		otherPlayerClient = session.Player1 // Assign otherPlayerClient
 	} else {
-		return fmt.Errorf("client is not a player in this game")
+		// This case was already handled by the playerIndex check, but defensive
+		return fmt.Errorf("client %s not part of session %s for event broadcasting", client.Username, session.ID)
 	}
 
-	// Verify it's the player's turn
+	if playerIndex == -1 {
+		return fmt.Errorf("client %s not found in game session %s", client.Username, session.ID)
+	}
+
+	// Check if it's the client's turn
 	if session.Game.CurrentTurnPlayerIndex != playerIndex {
-		return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
-			Code:    400,
-			Message: "It's not your turn",
-		})
-	}
-
-	// Validate the troop ID (can be enhanced later to check against available troop specs)
-	validTroops := []string{"pawn", "bishop", "rook", "knight", "prince", "queen"}
-	isValid := false
-	for _, valid := range validTroops {
-		if troopID == valid {
-			isValid = true
-			break
+		errMsg := fmt.Sprintf("Not your turn. It is player %d's turn.", session.Game.CurrentTurnPlayerIndex)
+		sendErr := client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{Message: errMsg})
+		if sendErr != nil {
+			log.Printf("Error sending 'not your turn' error to %s: %v", client.Username, sendErr)
 		}
+		return fmt.Errorf(errMsg) // Also return error to stop further processing
 	}
 
-	if !isValid {
-		return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
-			Code:    400,
-			Message: "Invalid troop ID. Valid options are: pawn, bishop, rook, knight, prince, queen",
-		})
-	}
+	// Get the appropriate game handler
+	// For now, we assume SimpleModeHandler. This might need to be stored in GameSession or retrieved based on Game.Mode
+	simpleHandler := game.NewSimpleModeHandler(session.Game)
 
-	// Create a SimpleModeHandler if needed
-	var simpleModeHandler *game.SimpleModeHandler
-	if session.Game.GameState == game.GameStateRunningSimple {
-		simpleModeHandler = game.NewSimpleModeHandler(session.Game)
-	}
+	// Prepare action data
+	actionData := map[string]interface{}{"troop_id": troopID}
 
-	// Process the turn
-	events, err := simpleModeHandler.ProcessTurn(playerIndex, "deploy_troop", map[string]interface{}{
-		"troop_id": troopID,
-	})
+	// Process the turn logic
+	events, err := simpleHandler.ProcessTurn(playerIndex, "deploy_troop", actionData)
 	if err != nil {
-		return client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{
-			Code:    500,
-			Message: "Error processing turn: " + err.Error(),
-		})
+		log.Printf("Error processing turn for player %s in game %s: %v", client.Username, session.ID, err)
+		// Send error to client
+		sendErr := client.Codec.Send(network.MessageTypeError, &network.ErrorPayload{Message: err.Error()})
+		if sendErr != nil {
+			log.Printf("Error sending process turn error to %s: %v", client.Username, sendErr)
+		}
+		return err // Return the error from ProcessTurn
 	}
 
-	// Send game events to both players
+	// Send game events that occurred during the turn (e.g., troop deployed, attacks, damage)
 	for _, event := range events {
-		// Send to current player
-		err := client.Codec.Send(network.MessageTypeGameEvent, &event)
-		if err != nil {
+		// Send to current player (client)
+		if err := client.Codec.Send(network.MessageTypeGameEvent, &event); err != nil {
 			log.Printf("Error sending game event to %s: %v", client.Username, err)
 		}
-
 		// Send to the other player
-		err = otherPlayerClient.Codec.Send(network.MessageTypeGameEvent, &event)
-		if err != nil {
-			log.Printf("Error sending game event to %s: %v", otherPlayerClient.Username, err)
+		if otherPlayerClient != nil && otherPlayerClient.Codec != nil {
+			if err := otherPlayerClient.Codec.Send(network.MessageTypeGameEvent, &event); err != nil {
+				log.Printf("Error sending game event to %s: %v", otherPlayerClient.Username, err)
+			}
+		} else {
+			log.Printf("Warning: otherPlayerClient or its codec is nil for game %s", session.ID)
 		}
 	}
 
-	// Send updated game state to both players
-	sm.sendUpdatedGameState(session)
-
-	// If the game is over, handle the end of game
+	// After processing the turn, check for game over
 	if session.Game.GameState == game.GameStateFinished {
 		sm.handleGameOver(session)
-	} else {
-		// If not over, notify about turn change
-		sm.notifyTurnChange(session)
+		return nil // Game is over, no further turn actions
 	}
+
+	// If game is not over, update game state for all players
+	sm.sendUpdatedGameState(session)
+
+	// Notify players about the turn change
+	sm.notifyTurnChange(session) // This will inform whose turn it is now
+
+	// Send troop choices to the NEW current player
+	sm.sendTroopChoicesToCurrentPlayer(session)
 
 	return nil
 }
@@ -599,3 +643,6 @@ func calculateDestroyedTowerExp(board *game.BoardState, opponentPlayerID string,
 	}
 	return expGained
 }
+
+// broadcastGameEvent sends a game event message to both players in a session.
+// ... existing code ...

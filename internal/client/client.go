@@ -11,15 +11,16 @@ import (
 
 // Client represents the TCR game client
 type Client struct {
-	Host            string
-	Port            int
-	Username        string
-	conn            net.Conn
-	codec           *network.Codec
-	messageHandlers map[network.MessageType]MessageHandler
-	handlersMutex   sync.RWMutex
-	connected       bool
-	disconnectChan  chan struct{}
+	Host                string
+	Port                int
+	Username            string
+	conn                net.Conn
+	codec               *network.Codec
+	messageHandlers     map[network.MessageType]MessageHandler
+	handlersMutex       sync.RWMutex
+	connected           bool
+	disconnectChan      chan struct{}
+	currentTroopChoices []network.TroopChoiceInfo // Stores the troop choices received from the server
 }
 
 // MessageHandler is a function that handles a specific type of message
@@ -228,4 +229,24 @@ func (c *Client) processMessage(msg *network.Message) {
 			}
 		}
 	}
+}
+
+// SetCurrentTroopChoices sets the available troop choices for the client for the current turn.
+func (c *Client) SetCurrentTroopChoices(choices []network.TroopChoiceInfo) {
+	c.handlersMutex.Lock() // Reuse handlersMutex for thread safety, or add a new one if contention is an issue
+	defer c.handlersMutex.Unlock()
+	c.currentTroopChoices = choices
+}
+
+// GetCurrentTroopChoices retrieves the troop choices. It returns a copy to prevent external modification.
+func (c *Client) GetCurrentTroopChoices() []network.TroopChoiceInfo {
+	c.handlersMutex.RLock()
+	defer c.handlersMutex.RUnlock()
+	if c.currentTroopChoices == nil {
+		return nil
+	}
+	// Return a copy to ensure the internal slice isn't modified by callers
+	choicesCopy := make([]network.TroopChoiceInfo, len(c.currentTroopChoices))
+	copy(choicesCopy, c.currentTroopChoices)
+	return choicesCopy
 }

@@ -29,7 +29,7 @@
 **Simple TCR Rules:**
 
 *   **Turns:** Players take turns deploying one troop.
-*   **Troop Deployment:** Player chooses one troop from the available list to deploy.
+*   **Troop Deployment:** Player chooses one troop from a random list including 3 random troops from the list of troops to deploy.
 *   **Troop Attack:** Deployed troops attack the lowest HP valid enemy tower on the player's turn *after* the turn they were deployed. If a troop survives combat, it remains and attacks again on subsequent turns.
 *   **Tower Attack:** If a tower was attacked by an enemy troop during the opponent's turn, the tower attacks back once at the *end* of that opponent's turn, targeting the last troop that attacked it (or oldest if multiple/last is gone).
 *   **Win Condition:** The first player to destroy the opponent's King Tower wins immediately.
@@ -39,7 +39,7 @@
 *   **Real-Time:** No turns. Game runs continuously for 3 minutes.
 *   **MANA System:**
     *   Players start with 5 MANA.
-    *   MANA regenerates at 1 MANA per second.
+    *   MANA regenerates at 1 MANA per 2 seconds.
     *   Maximum MANA is 10.
     *   Deploying troops costs MANA as specified in `config/troops.json`. Players cannot deploy if they lack sufficient MANA.
 *   **Continuous Attack:**

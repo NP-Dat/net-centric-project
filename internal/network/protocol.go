@@ -14,13 +14,14 @@ const (
 	MessageTypeJoinQueue   MessageType = "join_queue" // New message type for matchmaking
 
 	// Server to Client message types
-	MessageTypeAuthResult  MessageType = "auth_result"
-	MessageTypeGameStart   MessageType = "game_start"
-	MessageTypeStateUpdate MessageType = "state_update"
-	MessageTypeGameEvent   MessageType = "game_event"
-	MessageTypeGameOver    MessageType = "game_over"
-	MessageTypeTurnChange  MessageType = "turn_change"
-	MessageTypeError       MessageType = "error"
+	MessageTypeAuthResult   MessageType = "auth_result"
+	MessageTypeGameStart    MessageType = "game_start"
+	MessageTypeStateUpdate  MessageType = "state_update"
+	MessageTypeGameEvent    MessageType = "game_event"
+	MessageTypeGameOver     MessageType = "game_over"
+	MessageTypeTurnChange   MessageType = "turn_change"
+	MessageTypeError        MessageType = "error"
+	MessageTypeTroopChoices MessageType = "troop_choices" // New message type for troop choices
 )
 
 // Message is the base structure for all network messages
@@ -123,4 +124,16 @@ type GameOverPayload struct {
 type ErrorPayload struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+// TroopChoiceInfo contains details for a single troop choice
+type TroopChoiceInfo struct {
+	ID       string `json:"id"`        // e.g., "pawn", "knight"
+	Name     string `json:"name"`      // e.g., "Pawn", "Knight"
+	ManaCost int    `json:"mana_cost"` // Mana cost for the troop
+}
+
+// TroopChoicesPayload represents the payload for the troop choices message
+type TroopChoicesPayload struct {
+	Choices []TroopChoiceInfo `json:"choices"`
 }

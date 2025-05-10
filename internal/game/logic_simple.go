@@ -3,6 +3,7 @@ package game
 
 import (
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/NP-Dat/net-centric-project/internal/models"
@@ -120,6 +121,44 @@ func (h *SimpleModeHandler) createPlayerTowers(player *PlayerInGame, towerSpecs 
 	return nil
 }
 
+// GenerateAndStoreTroopChoices generates random troop choices for the current player and stores them.
+// It returns the payload to be sent to the client.
+func (h *SimpleModeHandler) GenerateAndStoreTroopChoices(player *PlayerInGame) (*network.TroopChoicesPayload, error) {
+	if h.game.TroopSpecs == nil || len(h.game.TroopSpecs) == 0 {
+		return nil, fmt.Errorf("no troop specifications available in game config")
+	}
+
+	// Collect all available troop specs
+	availableSpecs := []network.TroopChoiceInfo{}
+	for _, spec := range h.game.TroopSpecs { // Iterate over values, spec should have ID
+		// No longer filtering Queen. If Queen is a troop spec, she can be in the random draw.
+		availableSpecs = append(availableSpecs, network.TroopChoiceInfo{
+			ID:       spec.ID, // Assuming TroopSpec has an ID field matching the map key
+			Name:     spec.Name,
+			ManaCost: spec.ManaCost, // Even for simple mode, keep for consistency
+		})
+	}
+
+	if len(availableSpecs) == 0 {
+		player.OfferedTroopChoices = []network.TroopChoiceInfo{}                       // Clear any previous
+		return &network.TroopChoicesPayload{Choices: []network.TroopChoiceInfo{}}, nil // No troops to offer (excluding Queen)
+	}
+
+	rand.Seed(time.Now().UnixNano()) // Seed random number generator
+	rand.Shuffle(len(availableSpecs), func(i, j int) {
+		availableSpecs[i], availableSpecs[j] = availableSpecs[j], availableSpecs[i]
+	})
+
+	numChoices := 3
+	if len(availableSpecs) < numChoices {
+		numChoices = len(availableSpecs)
+	}
+
+	player.OfferedTroopChoices = availableSpecs[:numChoices]
+
+	return &network.TroopChoicesPayload{Choices: player.OfferedTroopChoices}, nil
+}
+
 // ProcessTurn processes a player's action during their turn
 func (h *SimpleModeHandler) ProcessTurn(playerIndex int, action string, actionData map[string]interface{}) ([]network.GameEventPayload, error) {
 	h.game.Mutex.Lock() // Lock for thread safety
@@ -134,16 +173,30 @@ func (h *SimpleModeHandler) ProcessTurn(playerIndex int, action string, actionDa
 	}
 
 	var events []network.GameEventPayload
+	// var troopChoicesPayload *network.TroopChoicesPayload // Removed: Not handled by ProcessTurn directly
 
 	// Get the current player and opponent
 	currentPlayer := h.game.Players[playerIndex]
 	opponentIndex := (playerIndex + 1) % 2
 	opponent := h.game.Players[opponentIndex]
 
+	// If it's the beginning of the player's action phase for this turn (i.e., no action yet taken)
+	// and no choices have been offered yet (or they were cleared from a previous invalid attempt).
+	// A better way might be a flag on the player for "has_received_choices_this_turn"
+	// For now, let's assume if action is "start_turn_action" or similar, or if OfferedTroopChoices is empty.
+	// The prompt to client for action should only happen *after* choices are sent.
+	// For simplicity, let's assume the session manager calls a specific function to get choices before asking ProcessTurn
+	// OR, ProcessTurn could have a special "action" like "get_choices"
+	// Let's assume for now that the session handles sending choices separately or ProcessTurn is called sequentially.
+
 	// --- Turn Sequence ---
 	// 1. Player Action (e.g., Deploy Troop)
 	switch action {
 	case "deploy_troop":
+		// Clear offered choices after an attempt, successful or not,
+		// as player gets one deploy action per turn.
+		// defer func() { currentPlayer.OfferedTroopChoices = nil }() // Clear after processing this action
+
 		troopID, ok := actionData["troop_id"].(string)
 		if !ok {
 			return nil, fmt.Errorf("invalid troop ID in action data")
@@ -152,17 +205,31 @@ func (h *SimpleModeHandler) ProcessTurn(playerIndex int, action string, actionDa
 		// Deploy the troop (create an instance) or handle Queen heal
 		deployEvents, err := h.deployTroop(currentPlayer, opponent, troopID)
 		if err != nil {
+			// If deploy failed (e.g. invalid choice), DO NOT clear OfferedTroopChoices
+			// The player should be able to try again with the same choices.
+			// Only clear if successful or turn ends.
 			return nil, fmt.Errorf("failed to deploy troop: %w", err)
 		}
 		events = append(events, deployEvents...)
+		currentPlayer.OfferedTroopChoices = nil // Clear choices after successful deployment
 
 		// Special handling for Queen troop (healing) - happens immediately on deploy turn
-		if troopID == "queen" {
+		// The Queen itself is not a standard deployable unit from the random list.
+		// The client should have a separate "Use Queen" action if that's the design,
+		// or "deploy_troop" with "queen" ID is handled specially.
+		// The document says: "Player chooses one troop from a random list... to deploy."
+		// "Queen Troop: Costs 5 Mana. Deployment is a one-time action healing... Does not persist on the board."
+		// This implies Queen might be selected from the random list if it appears.
+		// For now, the generateAndStoreTroopChoices excludes Queen from the random draw.
+		// If Queen IS deployable via this mechanism, remove the filter in generateAndStoreTroopChoices.
+		// Let's assume for now the current `proposed-plan` means queen can be one of the 3 random troops.
+		// I will remove the filter for "queen" in `generateAndStoreTroopChoices` later if needed.
+		// My `generateAndStoreTroopChoices` already excludes queen. If the intent is for queen to be in the random draw, this should change.
+
+		if troopID == "queen" { // This check remains, as Queen has special post-deploy logic
 			healEvents, err := h.processQueenHealing(currentPlayer)
 			if err != nil {
-				// Log error but maybe continue turn? Or return error?
-				fmt.Printf("Error processing queen healing: %v\n", err) // Log error
-				// Decide if this should halt the turn
+				fmt.Printf("Error processing queen healing: %v\n", err)
 			}
 			events = append(events, healEvents...)
 		}
@@ -223,6 +290,8 @@ func (h *SimpleModeHandler) ProcessTurn(playerIndex int, action string, actionDa
 
 	// 6. End turn - switch to the next player
 	h.nextTurn()
+	// After switching turn, the *new* current player will need their choices generated.
+	// This should ideally be handled by the session manager *before* it signals the client it's their turn.
 
 	// Add turn change event
 	events = append(events, network.GameEventPayload{
@@ -237,10 +306,26 @@ func (h *SimpleModeHandler) ProcessTurn(playerIndex int, action string, actionDa
 func (h *SimpleModeHandler) deployTroop(player *PlayerInGame, opponent *PlayerInGame, troopID string) ([]network.GameEventPayload, error) {
 	var events []network.GameEventPayload
 
-	// Look up troop spec from game config (assuming game has access to it)
-	// This part needs access to the loaded troop specifications.
-	// Let's assume h.game has a TroopSpecs map[string]*models.TroopSpec
-	troopSpec, exists := h.game.TroopSpecs[troopID] // Need to ensure TroopSpecs is populated in the Game struct
+	// Validate troop choice
+	isValidChoice := false
+	if len(player.OfferedTroopChoices) == 0 {
+		// This state should ideally not be reached if the flow is correct (choices offered before deploy action)
+		return nil, fmt.Errorf("troop choices not available for this turn to deploy %s. Choices might have been cleared or not generated.", troopID)
+	}
+
+	for _, choice := range player.OfferedTroopChoices {
+		if choice.ID == troopID {
+			isValidChoice = true
+			break
+		}
+	}
+
+	if !isValidChoice {
+		return nil, fmt.Errorf("invalid troop choice: '%s'. Not in offered list. Offered: %+v", troopID, player.OfferedTroopChoices)
+	}
+
+	// Look up troop spec from game config
+	troopSpec, exists := h.game.TroopSpecs[troopID]
 	if !exists {
 		return nil, fmt.Errorf("troop spec not found for ID: %s", troopID)
 	}
@@ -359,12 +444,15 @@ func (h *SimpleModeHandler) processTroopAttacks(player *PlayerInGame, opponent *
 	// Troops attack towers they're targeting
 	for _, troop := range player.ActiveTroops {
 		// Skip troops deployed this turn (they attack next turn)
-		if time.Since(troop.DeployedTime) < time.Second*2 {
+		// Rule: "Deployed troops attack ... on the player's turn *after* the turn they were deployed."
+		// Using a simple time check. A turn counter or flag on the troop would be more robust.
+		if time.Since(troop.DeployedTime) < time.Millisecond*100 { // Effectively, not on the same "processing instant" as deployment
 			continue
 		}
 
-		// Attack loop: Continue attacking as long as the troop is alive and has valid targets
-		for troop.CurrentHP > 0 {
+		// Attack loop: In Simple Mode, a troop attacks its target. If the target is destroyed,
+		// it finds a new target and attacks again in the same turn.
+		for troop.CurrentHP > 0 { // Loop to allow retargeting if a tower is destroyed
 			// Find target tower
 			targetTower, exists := h.game.BoardState.Towers[troop.TargetID]
 
@@ -372,12 +460,16 @@ func (h *SimpleModeHandler) processTroopAttacks(player *PlayerInGame, opponent *
 			if !exists || targetTower == nil || targetTower.CurrentHP <= 0 {
 				newTarget := h.findValidTarget(opponent)
 				if newTarget == nil {
-					// No valid targets remain for this troop, break the attack loop
+					// No valid targets remain for this troop
 					troop.TargetID = "" // Clear target
-					break
+					events = append(events, network.GameEventPayload{
+						Message: fmt.Sprintf("%s's %s has no valid targets left.", player.Username, troop.Name),
+						Time:    time.Now(),
+					})
+					break // Break from this troop's attack loop for this turn
 				}
-				troop.TargetID = newTarget.ID
-				targetTower = newTarget
+				troop.TargetID = newTarget.ID // Assign the ID of the new target
+				targetTower = newTarget       // Update targetTower for the current attack
 				events = append(events, network.GameEventPayload{
 					Message: fmt.Sprintf("%s's %s retargets %s's %s",
 						player.Username, troop.Name, opponent.Username, targetTower.Name),
@@ -387,16 +479,20 @@ func (h *SimpleModeHandler) processTroopAttacks(player *PlayerInGame, opponent *
 
 			// Calculate damage using the combat function
 			damage := CalculateDamage(troop.ATK, targetTower.DEF)
-
-			// Apply damage
+			originalTowerHP := targetTower.CurrentHP
 			targetTower.CurrentHP -= damage
 
 			attackEvent := network.GameEventPayload{
-				Message: fmt.Sprintf("%s's %s attacks %s's %s for %d damage (HP: %d/%d)",
-					player.Username, troop.Name, opponent.Username, targetTower.Name, damage, targetTower.CurrentHP, targetTower.MaxHP),
+				Message: fmt.Sprintf("%s's %s attacks %s's %s for %d damage (HP: %d -> %d/%d)",
+					player.Username, troop.Name, opponent.Username, targetTower.Name, damage, originalTowerHP, targetTower.CurrentHP, targetTower.MaxHP),
 				Time: time.Now(),
 			}
 			events = append(events, attackEvent)
+
+			// Record that this tower was attacked by this troop for counterattack purposes
+			if targetTower != nil && (damage > 0 || (damage == 0 && troop.ATK > 0)) { // Ensure targetTower is not nil and an attack attempt was made
+				targetTower.LastAttackedByTroopID = troop.InstanceID
+			}
 
 			// Check if tower was destroyed
 			if targetTower.CurrentHP <= 0 {
@@ -406,85 +502,86 @@ func (h *SimpleModeHandler) processTroopAttacks(player *PlayerInGame, opponent *
 					Time:    time.Now(),
 				})
 
-				// Tower destroyed, check for game over immediately
-				gameOver, winnerIdx, loserIdx := h.checkGameOver()
+				// Tower destroyed, check for game over immediately.
+				// The main ProcessTurn function will handle setting game state for game over.
+				gameOver, _, _ := h.checkGameOver() // winnerIdx, loserIdx are handled in ProcessTurn
 				if gameOver {
-					// If game over, stop further attacks by this troop
-					events = append(events, network.GameEventPayload{
-						Message: fmt.Sprintf("Game Over: %s wins! (King Tower destroyed)", h.game.Players[winnerIdx].Username),
-						Time:    time.Now(),
-					})
-					h.game.GameState = GameStateFinished
-					h.game.EndTime = time.Now()
-					h.game.WinnerID = h.game.Players[winnerIdx].ID
-					h.game.LoserID = h.game.Players[loserIdx].ID
-					break
+					// Event for game over will be generated by ProcessTurn
+					break // Stop this troop's attack loop as game is over
 				}
-
-				// Tower destroyed, but game not over. Find a new target and continue attacking in the same turn.
+				// If game not over, continue to find a new target (loop continues)
 				continue
 			} else {
+				// Target not destroyed, troop's attack for this turn is done.
 				break
 			}
-		}
+		} // End of current troop's attack loop
 	}
 
-	// Clean up defeated troops after all attacks are processed
-	h.cleanupDefeatedUnits(player, opponent)
-
+	// cleanupDefeatedUnits is called in ProcessTurn after all actions for the turn.
+	// Do not call it here as counterattacks might defeat troops.
 	return events, nil
 }
 
 // processTowerCounterattacks handles towers attacking troops that attacked them
+// player: The player whose turn it just was (their troops attacked and are now targets for counterattack).
+// opponent: The player whose towers were attacked and will now counterattack.
 func (h *SimpleModeHandler) processTowerCounterattacks(player *PlayerInGame, opponent *PlayerInGame) ([]network.GameEventPayload, error) {
 	var events []network.GameEventPayload
-	attackedTroopIDs := make(map[string]bool)
 
-	// Iterate through opponent's towers to see if they need to counterattack
+	// Iterate through opponent's towers (the ones doing the counterattacking)
 	for _, tower := range opponent.Towers {
-		if tower.CurrentHP <= 0 || tower.TargetID == "" {
+		if tower.CurrentHP <= 0 {
+			continue // Destroyed towers cannot attack
+		}
+
+		lastAttackerTroopID := tower.LastAttackedByTroopID
+		// Clear this field once retrieved, so the tower uses this information once for this counterattack phase.
+		// It's important this is cleared so it doesn't counterattack the same troop again next turn
+		// unless that troop attacks again.
+		tower.LastAttackedByTroopID = ""
+
+		if lastAttackerTroopID == "" {
+			// This tower was not attacked in the last phase by the current player's troops,
+			// or its last attacker info was already used/cleared.
 			continue
 		}
 
-		// Find the troop that last targeted this tower
-		targetTroop, exists := h.game.BoardState.ActiveTroops[tower.TargetID]
+		// Find the troop that last attacked this tower
+		targetTroop, exists := h.game.BoardState.ActiveTroops[lastAttackerTroopID]
 
-		// Check if the troop still exists and belongs to the current player
+		// Validate the target troop:
+		// - Must exist
+		// - Must belong to the 'player' (the one whose turn just ended and whose troops are being targeted)
+		// - Must be alive
 		if !exists || targetTroop == nil || targetTroop.OwnerPlayerID != player.ID || targetTroop.CurrentHP <= 0 {
-			continue
+			continue // Target is invalid, already gone, or not owned by the player whose troops are being counter-attacked.
 		}
 
-		// Ensure a troop isn't counterattacked multiple times
-		if attackedTroopIDs[targetTroop.InstanceID] {
-			continue
-		}
-
-		// Calculate damage using the combat function
+		// Tower attacks the targetTroop
 		damage := CalculateDamage(tower.ATK, targetTroop.DEF)
-
-		// Apply damage
+		originalTroopHP := targetTroop.CurrentHP
 		targetTroop.CurrentHP -= damage
-		attackedTroopIDs[targetTroop.InstanceID] = true
 
 		events = append(events, network.GameEventPayload{
-			Message: fmt.Sprintf("%s's %s counterattacks %s's %s for %d damage (HP: %d/%d)",
-				opponent.Username, tower.Name, player.Username, targetTroop.Name, damage, targetTroop.CurrentHP, targetTroop.MaxHP),
+			Message: fmt.Sprintf("%s's %s counterattacks %s's %s for %d damage (HP: %d -> %d/%d)",
+				opponent.Username, tower.Name, player.Username, targetTroop.Name, damage, originalTroopHP, targetTroop.CurrentHP, targetTroop.MaxHP),
 			Time: time.Now(),
 		})
 
 		// Check if troop was defeated
 		if targetTroop.CurrentHP <= 0 {
-			targetTroop.CurrentHP = 0
+			targetTroop.CurrentHP = 0 // Ensure HP doesn't go negative
 			events = append(events, network.GameEventPayload{
-				Message: fmt.Sprintf("%s's %s was defeated!", player.Username, targetTroop.Name),
-				Time:    time.Now(),
+				Message: fmt.Sprintf("%s's %s was defeated by %s's %s!",
+					player.Username, targetTroop.Name, opponent.Username, tower.Name),
+				Time: time.Now(),
 			})
+			// Actual removal of the troop from BoardState.ActiveTroops and player.ActiveTroops
+			// will be handled by cleanupDefeatedUnits called later in ProcessTurn.
 		}
 	}
-
-	// Clean up defeated troops after all attacks are processed
-	h.cleanupDefeatedUnits(player, opponent)
-
+	// cleanupDefeatedUnits is called in ProcessTurn after all actions.
 	return events, nil
 }
 
